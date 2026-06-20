@@ -1,0 +1,409 @@
+"""Calendar-based hold-out validation for forecasting models."""
+
+from __future__ import annotations
+
+import logging
+from datetime import date
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+from sqlalchemy.orm import Session
+
+from app.forecasting.censored_demand.corrector import correct_demand
+from app.forecasting.demand_quantity import as_consumption_demand
+from app.forecasting.constants import TFT_HOLDOUT_MAX_EPOCHS
+from app.forecasting.ensemble.conformal import ConformalCalibrator
+from app.forecasting.ensemble.stacking import StackingMetaLearner
+from app.forecasting.feature_engineering.pipeline import build_feature_matrix
+from app.forecasting.evaluation_metrics import build_evaluation_mask
+from app.forecasting.schemas import (
+    HoldoutMetrics,
+    HoldoutResponse,
+    HoldoutSeriesPoint,
+    ModelWeightBreakdown,
+    PeriodRange,
+)
+from app.forecasting.training.trainer import MODEL_REGISTRY
+from app.forecasting.prediction_bounds import demand_prediction_cap, sanitize_ensemble_predictions
+from app.forecasting.training.walk_forward import (
+    _predict_fold,
+    accuracy_from_smape,
+    collect_walk_forward_predictions,
+    smape,
+)
+from app.services.demand_aggregation import get_receipt_date_bounds
+
+logger = logging.getLogger(__name__)
+
+
+def _as_date_series(df: pd.DataFrame) -> pd.Series:
+    if "demand_date" in df.columns:
+        return pd.to_datetime(df["demand_date"]).dt.normalize()
+    return pd.to_datetime(df.index).normalize()
+
+
+def _compute_metrics(
+    actuals: np.ndarray,
+    predicted: np.ndarray,
+    p10: Optional[np.ndarray] = None,
+    p90: Optional[np.ndarray] = None,
+    *,
+    include_mask: Optional[np.ndarray] = None,
+) -> HoldoutMetrics:
+    actuals = np.asarray(actuals, dtype=float)
+    predicted = np.asarray(predicted, dtype=float)
+    valid = ~np.isnan(predicted)
+    if include_mask is not None:
+        valid &= np.asarray(include_mask, dtype=bool)
+    if not valid.any():
+        return HoldoutMetrics(smape=0.0, mae=0.0, coverage_90=0.0, accuracy_pct=0.0)
+
+    a = actuals[valid]
+    p = predicted[valid]
+    smape_val = float(np.mean([smape(act, pred) for act, pred in zip(a, p)]))
+    mae_val = float(np.mean(np.abs(a - p)))
+
+    coverage = 0.0
+    if p10 is not None and p90 is not None:
+        lower = np.asarray(p10, dtype=float)[valid]
+        upper = np.asarray(p90, dtype=float)[valid]
+        coverage = float(np.mean((a >= lower) & (a <= upper)))
+
+    return HoldoutMetrics(
+        smape=smape_val,
+        mae=mae_val,
+        coverage_90=coverage,
+        accuracy_pct=accuracy_from_smape(smape_val),
+    )
+
+
+def _ensemble_intervals(
+    p50: np.ndarray,
+    sarima: np.ndarray,
+    lgbm: np.ndarray,
+    tft: np.ndarray,
+    sarima_p10: np.ndarray,
+    lgbm_p10: np.ndarray,
+    tft_p10: np.ndarray,
+    sarima_p90: np.ndarray,
+    lgbm_p90: np.ndarray,
+    tft_p90: np.ndarray,
+    weights: ModelWeightBreakdown,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Derive ensemble P10/P90 from the best-performing base model."""
+    model_stacks = (
+        (weights.sarima, sarima_p10, sarima_p90, sarima),
+        (weights.lgbm, lgbm_p10, lgbm_p90, lgbm),
+        (weights.tft, tft_p10, tft_p90, tft),
+    )
+    best_weight, best_p10, best_p90, best_p50 = max(model_stacks, key=lambda item: item[0])
+    if best_weight > 0:
+        return (
+            np.clip(best_p10.astype(float), 0.0, None),
+            np.maximum(best_p90.astype(float), best_p50.astype(float)),
+        )
+
+    weight_arr = np.array([weights.sarima, weights.lgbm, weights.tft], dtype=float)
+    if weight_arr.sum() == 0.0:
+        weight_arr = np.array([1 / 3, 1 / 3, 1 / 3], dtype=float)
+    else:
+        weight_arr = weight_arr / weight_arr.sum()
+
+    def _weighted_quantile(stack: np.ndarray) -> np.ndarray:
+        blended = np.zeros(stack.shape[0], dtype=float)
+        for idx, weight in enumerate(weight_arr):
+            if weight == 0.0:
+                continue
+            col = stack[:, idx]
+            blended += weight * np.where(np.isnan(col), 0.0, col)
+        return blended
+
+    p10_stack = np.column_stack([sarima_p10, lgbm_p10, tft_p10])
+    p90_stack = np.column_stack([sarima_p90, lgbm_p90, tft_p90])
+    p10 = _weighted_quantile(p10_stack)
+    p90 = _weighted_quantile(p90_stack)
+
+    spread = np.nanstd(np.column_stack([sarima, lgbm, tft]), axis=1)
+    spread = np.where(np.isnan(spread) | (spread == 0), np.maximum(p50 * 0.2, 1.0), spread)
+    p10 = np.where(np.isnan(p10) | (p10 == 0.0), np.clip(p50 - spread, 0.0, None), p10)
+    p90 = np.where(np.isnan(p90), p50 + spread, p90)
+    p10 = np.minimum(p10, p50)
+    p90 = np.maximum(p90, p50)
+    return p10, p90
+
+
+def run_holdout_validation(
+    drug_code: str,
+    db_session: Session,
+    train_end: date,
+    test_start: date,
+    test_end: date,
+    models: list[str],
+    center_syn_id: Optional[str] = None,
+    train_start: Optional[date] = None,
+) -> HoldoutResponse:
+    """
+    Train on demand up to ``train_end``, forecast ``test_start``–``test_end``,
+    and compare ensemble + base-model predictions to actual demand.
+    """
+    if test_start <= train_end:
+        raise ValueError("test_start must be after train_end")
+    if test_end < test_start:
+        raise ValueError("test_end must be on or after test_start")
+
+    valid_models = [name for name in models if name in MODEL_REGISTRY]
+    if not valid_models:
+        raise ValueError("No valid models requested. Choose from: sarima, lgbm, tft.")
+
+    receipt_start, receipt_end = get_receipt_date_bounds(db_session, drug_code)
+    if receipt_start is None or receipt_end is None:
+        raise ValueError(f"No receipt history found for drug {drug_code}")
+
+    resolved_train_start = train_start or receipt_start
+    if receipt_end < test_end:
+        raise ValueError(
+            f"Receipt data ends {receipt_end.isoformat()} — cannot evaluate through "
+            f"{test_end.isoformat()}. Upload more history or shorten the test window."
+        )
+
+    full_df = build_feature_matrix(
+        drug_code,
+        center_syn_id,
+        db_session,
+        start_date=resolved_train_start,
+        end_date=test_end,
+    )
+    corrected_df = correct_demand(
+        drug_code,
+        center_syn_id,
+        db_session,
+        feature_df=full_df,
+    )
+    dates = _as_date_series(corrected_df)
+    train_mask = dates <= pd.Timestamp(train_end)
+    test_mask = (dates >= pd.Timestamp(test_start)) & (dates <= pd.Timestamp(test_end))
+
+    if not train_mask.any():
+        raise ValueError("Training window is empty — check train_start / train_end.")
+    if not test_mask.any():
+        raise ValueError("Test window is empty — check test_start / test_end.")
+
+    train_df = corrected_df.loc[train_mask].copy()
+    history_df = corrected_df.copy()
+
+    test_horizon = int(test_mask.sum())
+    actuals = as_consumption_demand(
+        corrected_df.loc[test_mask, "total_quantity"].astype(float).values,
+    )
+    test_dates = [pd.Timestamp(d).date() for d in corrected_df.index[test_mask]]
+
+    model_preds: dict[str, pd.DataFrame] = {}
+    model_errors: dict[str, str] = {}
+
+    for model_name in valid_models:
+        model_class = MODEL_REGISTRY[model_name]()
+        try:
+            if model_name == "tft":
+                model_class.train(
+                    train_df,
+                    drug_code,
+                    max_epochs=TFT_HOLDOUT_MAX_EPOCHS,
+                )
+            else:
+                model_class.train(train_df, drug_code)
+            if model_name == "tft" and getattr(model_class, "_skipped", False):
+                model_errors[model_name] = "Insufficient history for TFT (365 days required)"
+                continue
+            future_covariates = history_df.loc[test_mask] if model_name == "lgbm" else None
+            if model_name == "lgbm":
+                pred_df = model_class.predict(
+                    train_df,
+                    test_horizon,
+                    future_covariates=future_covariates,
+                )
+            else:
+                pred_df = _predict_fold(
+                    model_class,
+                    model_name,
+                    train_df,
+                    history_df,
+                    test_horizon,
+                )
+            if pred_df is None:
+                model_errors[model_name] = "Model skipped during prediction"
+                continue
+            model_preds[model_name] = pred_df
+        except Exception as exc:
+            logger.warning("Hold-out %s failed for %s: %s", model_name, drug_code, exc)
+            model_errors[model_name] = str(exc)
+
+    if not model_preds:
+        detail = "; ".join(f"{k}: {v}" for k, v in model_errors.items())
+        raise ValueError(f"No models produced hold-out predictions. {detail}")
+
+    def _series(name: str, col: str) -> np.ndarray:
+        if name not in model_preds:
+            return np.full(test_horizon, np.nan)
+        return model_preds[name][col].astype(float).values
+
+    sarima_p50 = _series("sarima", "p50")
+    lgbm_p50 = _series("lgbm", "p50")
+    tft_p50 = _series("tft", "p50")
+    prediction_cap = demand_prediction_cap(
+        train_df["total_quantity"].astype(float).values,
+    )
+    sarima_p50, lgbm_p50, tft_p50 = sanitize_ensemble_predictions(
+        sarima_p50,
+        lgbm_p50,
+        tft_p50,
+        prediction_cap,
+    )
+    sarima_p10 = _series("sarima", "p10")
+    lgbm_p10 = _series("lgbm", "p10")
+    tft_p10 = _series("tft", "p10")
+    sarima_p90 = _series("sarima", "p90")
+    lgbm_p90 = _series("lgbm", "p90")
+    tft_p90 = _series("tft", "p90")
+
+    stack_models = {name: MODEL_REGISTRY[name] for name in model_preds}
+    wf_preds = collect_walk_forward_predictions(train_df, drug_code, stack_models)
+    weights = ModelWeightBreakdown(sarima=0.0, lgbm=0.0, tft=0.0)
+
+    if wf_preds is not None and len(wf_preds["actuals"]) >= 5:
+        wf_sarima, wf_lgbm, wf_tft = sanitize_ensemble_predictions(
+            wf_preds.get("sarima", np.full(len(wf_preds["actuals"]), np.nan)),
+            wf_preds.get("lgbm", np.full(len(wf_preds["actuals"]), np.nan)),
+            wf_preds.get("tft", np.full(len(wf_preds["actuals"]), np.nan)),
+            prediction_cap,
+        )
+        wf_eval_mask = build_evaluation_mask(wf_preds["actuals"])
+        stacker = StackingMetaLearner()
+        if wf_eval_mask.any():
+            stacker.fit(
+                wf_sarima[wf_eval_mask],
+                wf_lgbm[wf_eval_mask],
+                wf_tft[wf_eval_mask],
+                wf_preds["actuals"][wf_eval_mask],
+            )
+        else:
+            stacker.fit(wf_sarima, wf_lgbm, wf_tft, wf_preds["actuals"])
+        ensemble_p50, weights = stacker.predict(
+            sarima_p50,
+            lgbm_p50,
+            tft_p50,
+            prediction_cap=prediction_cap,
+        )
+        wf_ensemble, _ = stacker.predict(
+            wf_sarima,
+            wf_lgbm,
+            wf_tft,
+            prediction_cap=prediction_cap,
+        )
+        wf_spread = np.nanstd(np.column_stack([wf_sarima, wf_lgbm, wf_tft]), axis=1)
+        wf_spread = np.where(
+            np.isnan(wf_spread) | (wf_spread == 0),
+            np.maximum(wf_ensemble * 0.2, 1.0),
+            wf_spread,
+        )
+        wf_p10 = np.clip(wf_ensemble - wf_spread, 0.0, None)
+        wf_p90 = wf_ensemble + wf_spread
+        calibrator = ConformalCalibrator()
+        calibrator.calibrate_scale(
+            wf_ensemble[wf_eval_mask],
+            wf_preds["actuals"][wf_eval_mask],
+            wf_p10[wf_eval_mask],
+            wf_p90[wf_eval_mask],
+        )
+    else:
+        available = np.column_stack([sarima_p50, lgbm_p50, tft_p50])
+        ensemble_p50 = np.nanmean(available, axis=1)
+        active = (~np.isnan(available)).sum(axis=0)
+        total_active = max(int(active.sum()), 1)
+        weights = ModelWeightBreakdown(
+            sarima=float(active[0] / total_active) if active[0] else 0.0,
+            lgbm=float(active[1] / total_active) if active[1] else 0.0,
+            tft=float(active[2] / total_active) if active[2] else 0.0,
+        )
+
+    ensemble_p10, ensemble_p90 = _ensemble_intervals(
+        ensemble_p50,
+        sarima_p50,
+        lgbm_p50,
+        tft_p50,
+        sarima_p10,
+        lgbm_p10,
+        tft_p10,
+        sarima_p90,
+        lgbm_p90,
+        tft_p90,
+        weights,
+    )
+
+    test_df = corrected_df.loc[test_mask]
+    eval_mask = build_evaluation_mask(
+        actuals,
+        is_stockout=test_df["is_stockout"].values if "is_stockout" in test_df.columns else None,
+    )
+
+    if wf_preds is not None and len(wf_preds["actuals"]) >= 5:
+        _, ensemble_p10, ensemble_p90 = calibrator.adjust_intervals_asymmetric(
+            ensemble_p10,
+            ensemble_p50,
+            ensemble_p90,
+        )
+
+    per_model_metrics: dict[str, HoldoutMetrics] = {}
+    for model_name in valid_models:
+        if model_name not in model_preds:
+            continue
+        pred = model_preds[model_name]
+        per_model_metrics[model_name] = _compute_metrics(
+            actuals,
+            pred["p50"].astype(float).values,
+            pred["p10"].astype(float).values,
+            pred["p90"].astype(float).values,
+            include_mask=eval_mask,
+        )
+
+    ensemble_metrics = _compute_metrics(
+        actuals,
+        ensemble_p50,
+        ensemble_p10,
+        ensemble_p90,
+        include_mask=eval_mask,
+    )
+
+    series: list[HoldoutSeriesPoint] = []
+    for idx, demand_date in enumerate(test_dates):
+        series.append(
+            HoldoutSeriesPoint(
+                date=demand_date,
+                actual=float(actuals[idx]),
+                sarima_p50=_optional_float(sarima_p50[idx]),
+                lgbm_p50=_optional_float(lgbm_p50[idx]),
+                tft_p50=_optional_float(tft_p50[idx]),
+                ensemble_p50=_optional_float(ensemble_p50[idx]),
+                ensemble_p10=_optional_float(ensemble_p10[idx]),
+                ensemble_p90=_optional_float(ensemble_p90[idx]),
+            )
+        )
+
+    return HoldoutResponse(
+        drug_code=drug_code,
+        center_syn_id=center_syn_id,
+        train_period=PeriodRange(start=resolved_train_start, end=train_end),
+        test_period=PeriodRange(start=test_start, end=test_end),
+        models_evaluated=sorted(model_preds.keys()),
+        model_errors=model_errors,
+        metrics={"ensemble": ensemble_metrics, **per_model_metrics},
+        total_accuracy_pct=ensemble_metrics.accuracy_pct,
+        model_weights=weights,
+        series=series,
+    )
+
+
+def _optional_float(value: float) -> Optional[float]:
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return None
+    return float(value)

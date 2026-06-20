@@ -1,0 +1,84 @@
+# ── OS / Editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+.idea/
+.vscode/
+
+# ── Environment & secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Python (backend/) ─────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+backend/bin/
+backend/lib/
+backend/include/
+backend/share/
+pyvenv.cfg
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Type checkers & linters
+.mypy_cache/
+.ruff_cache/
+.pytype/
+
+# Packaging
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Logs
+*.log
+
+# ML training outputs
+backend/lightning_logs/
+backend/checkpoints/
+backend/src/app/forecasting/artifacts/
+backend/src/app/cold_start/artifacts/*
+!backend/src/app/cold_start/artifacts/.gitkeep
+
+# ── Node / Next.js (dashboard/) ───────────────────────────────────────────────
+node_modules/
+dashboard/node_modules/
+
+# Next.js build output
+.next/
+dashboard/.next/
+out/
+dashboard/out/
+
+# Turbopack / Vercel
+.turbo/
+.vercel/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Local frontend env overrides
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
