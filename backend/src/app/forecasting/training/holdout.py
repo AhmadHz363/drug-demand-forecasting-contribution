@@ -16,7 +16,15 @@ from app.forecasting.constants import TFT_HOLDOUT_MAX_EPOCHS
 from app.forecasting.ensemble.conformal import ConformalCalibrator
 from app.forecasting.ensemble.stacking import StackingMetaLearner
 from app.forecasting.feature_engineering.pipeline import build_feature_matrix
-from app.forecasting.evaluation_metrics import build_evaluation_mask
+from app.forecasting.evaluation_metrics import (
+    accuracy_from_smape,
+    accuracy_skill_from_mase,
+    build_evaluation_mask,
+    mase,
+    mean_pinball_loss,
+    rmsse,
+)
+from app.forecasting.demand_segmentation import classify_demand_segment_from_frame
 from app.forecasting.schemas import (
     HoldoutMetrics,
     HoldoutResponse,
@@ -57,24 +65,44 @@ def _compute_metrics(
     if include_mask is not None:
         valid &= np.asarray(include_mask, dtype=bool)
     if not valid.any():
-        return HoldoutMetrics(smape=0.0, mae=0.0, coverage_90=0.0, accuracy_pct=0.0)
+        return HoldoutMetrics(
+            smape=0.0,
+            mae=0.0,
+            coverage_90=0.0,
+            accuracy_pct=0.0,
+            accuracy_skill_pct=0.0,
+        )
 
     a = actuals[valid]
     p = predicted[valid]
     smape_val = float(np.mean([smape(act, pred) for act, pred in zip(a, p)]))
     mae_val = float(np.mean(np.abs(a - p)))
+    mase_val = mase(a, p)
+    rmsse_val = rmsse(a, p)
 
     coverage = 0.0
+    pinball_p10 = 0.0
+    pinball_p50 = 0.0
+    pinball_p90 = 0.0
     if p10 is not None and p90 is not None:
         lower = np.asarray(p10, dtype=float)[valid]
         upper = np.asarray(p90, dtype=float)[valid]
         coverage = float(np.mean((a >= lower) & (a <= upper)))
+        pinball_p10 = mean_pinball_loss(a, lower, 0.10)
+        pinball_p50 = mean_pinball_loss(a, p, 0.50)
+        pinball_p90 = mean_pinball_loss(a, upper, 0.90)
 
     return HoldoutMetrics(
         smape=smape_val,
         mae=mae_val,
+        mase=mase_val,
+        rmsse=rmsse_val,
+        pinball_p10=pinball_p10,
+        pinball_p50=pinball_p50,
+        pinball_p90=pinball_p90,
         coverage_90=coverage,
         accuracy_pct=accuracy_from_smape(smape_val),
+        accuracy_skill_pct=accuracy_skill_from_mase(mase_val),
     )
 
 
@@ -191,6 +219,7 @@ def run_holdout_validation(
 
     train_df = corrected_df.loc[train_mask].copy()
     history_df = corrected_df.copy()
+    demand_segment = classify_demand_segment_from_frame(train_df)
 
     test_horizon = int(test_mask.sum())
     actuals = as_consumption_demand(
@@ -278,7 +307,7 @@ def run_holdout_validation(
             prediction_cap,
         )
         wf_eval_mask = build_evaluation_mask(wf_preds["actuals"])
-        stacker = StackingMetaLearner()
+        stacker = StackingMetaLearner(segment=demand_segment)
         if wf_eval_mask.any():
             stacker.fit(
                 wf_sarima[wf_eval_mask],
@@ -397,7 +426,9 @@ def run_holdout_validation(
         models_evaluated=sorted(model_preds.keys()),
         model_errors=model_errors,
         metrics={"ensemble": ensemble_metrics, **per_model_metrics},
+        demand_segment=demand_segment,
         total_accuracy_pct=ensemble_metrics.accuracy_pct,
+        total_accuracy_skill_pct=ensemble_metrics.accuracy_skill_pct,
         model_weights=weights,
         series=series,
     )

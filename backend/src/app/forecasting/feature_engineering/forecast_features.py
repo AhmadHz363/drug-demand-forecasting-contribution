@@ -142,4 +142,17 @@ def build_recursive_feature_row(
         else:
             features[col] = supplier_defaults[col]
 
+    # Flag columns added by add_external_features / add_supplier_features during
+    # training — they must be present at prediction time so the feature matrix
+    # produced here exactly matches self._feature_names stored by LightGBMModel.
+    if covariate_row is not None and "external_features_is_default" in covariate_row.index:
+        features["external_features_is_default"] = float(covariate_row["external_features_is_default"])
+    else:
+        features["external_features_is_default"] = 1.0
+
+    if covariate_row is not None and "supplier_features_is_default" in covariate_row.index:
+        features["supplier_features_is_default"] = float(covariate_row["supplier_features_is_default"])
+    else:
+        features["supplier_features_is_default"] = 1.0
+
     return features

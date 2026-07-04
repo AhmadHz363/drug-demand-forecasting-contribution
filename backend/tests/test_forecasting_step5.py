@@ -25,8 +25,8 @@ def _synthetic_model_predictions(n: int, seed: int = 42) -> tuple[np.ndarray, ..
 @pytest.fixture
 def artifacts_dir(tmp_path, monkeypatch) -> Iterator[str]:
     path = str(tmp_path / "artifacts")
-    monkeypatch.setattr("app.forecasting.ensemble.stacking.ARTIFACTS_DIR", path)
-    monkeypatch.setattr("app.forecasting.ensemble.conformal.ARTIFACTS_DIR", path)
+    monkeypatch.setattr("app.forecasting.constants.ARTIFACTS_DIR", path)
+    monkeypatch.setattr("app.forecasting.ensemble.segment_artifacts.ARTIFACTS_DIR", path)
     yield path
 
 

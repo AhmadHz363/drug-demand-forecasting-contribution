@@ -29,6 +29,14 @@ export interface DailyForecast {
   p10: number;
   p50: number;
   p90: number;
+  recommended_quantity?: number | null;
+}
+
+export interface InferenceHealth {
+  demand_segment: string;
+  used_stacking: boolean;
+  used_conformal: boolean;
+  used_spread_fallback: boolean;
 }
 
 export type GraduationStage =
@@ -91,19 +99,58 @@ export interface ForecastResponse {
   horizon_days: number;
   model_weights: ModelWeightBreakdown;
   forecast: DailyForecast[];
+  history?: DailyDemandPoint[];
   shap_features?: ShapFeature[] | null;
   attention_weights?: AttentionWeight[] | null;
   uncertainty_note: string;
   smape_last_validation?: number | null;
+  ven_class?: string | null;
+  operating_quantile?: number | null;
+  recommended_quantity_total?: number | null;
+  inference_health?: InferenceHealth | null;
   error?: string | null;
+}
+
+export interface DrugQualitySummary {
+  drug_code: string;
+  status: string;
+  reasons: string[];
 }
 
 export interface TrainForecastingResponse {
   status: string;
+  training_run_id?: string;
   drugs_trained: number;
   models_trained: string[];
   smape_summary: Record<string, number>;
   artifacts_saved: string[];
+  skipped_drugs?: DrugQualitySummary[];
+  flagged_drugs?: DrugQualitySummary[];
+  drift_alerts?: string[];
+}
+
+export interface ModelPerformanceRow {
+  drug_code: string;
+  model_name: string;
+  smape: number;
+  mase?: number | null;
+  coverage_90: number;
+  demand_segment?: string | null;
+  data_quality_status?: string | null;
+  training_run_id?: string | null;
+  weight_sarima?: number | null;
+  weight_lgbm?: number | null;
+  weight_tft?: number | null;
+  weights_as_of?: string | null;
+  smape_drift_pct?: number | null;
+  mase_drift_pct?: number | null;
+  drift_detected: boolean;
+  evaluated_at: string;
+}
+
+export interface PerformanceMonitoringResponse {
+  items: ModelPerformanceRow[];
+  total: number;
 }
 
 export interface PeriodRange {
@@ -116,6 +163,12 @@ export interface HoldoutMetrics {
   mae: number;
   coverage_90: number;
   accuracy_pct: number;
+  mase?: number;
+  rmsse?: number;
+  pinball_p10?: number;
+  pinball_p50?: number;
+  pinball_p90?: number;
+  accuracy_skill_pct?: number;
 }
 
 export interface HoldoutSeriesPoint {
@@ -162,7 +215,9 @@ export interface HoldoutResponse {
   models_evaluated: string[];
   model_errors: Record<string, string>;
   metrics: Record<string, HoldoutMetrics>;
+  demand_segment: string;
   total_accuracy_pct: number;
+  total_accuracy_skill_pct: number;
   model_weights: ModelWeightBreakdown;
   series: HoldoutSeriesPoint[];
 }
@@ -215,6 +270,24 @@ export interface PaginatedDrugListResponse {
   page: number;
   page_size: number;
   total_pages: number;
+}
+
+export interface DailyDemandPoint {
+  date: string;
+  quantity: number;
+}
+
+export interface DrugDetailResponse extends DrugItem {
+  total_quantity: number;
+  distinct_receipt_days: number;
+  first_receipt_date?: string | null;
+  last_receipt_date?: string | null;
+  center_count: number;
+  avg_daily_quantity?: number | null;
+  observation_count: number;
+  graduation_stage: GraduationStage;
+  lookback_days: number;
+  demand_series: DailyDemandPoint[];
 }
 
 export interface CategoryItem {

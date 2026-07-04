@@ -11,6 +11,7 @@ from app.forecasting.feature_engineering.temporal_features import temporal_featu
 
 METADATA_COLUMNS = {
     "total_quantity",
+    "observed_quantity",
     "em_corrected_quantity",
     "correction_method",
     "is_stockout",

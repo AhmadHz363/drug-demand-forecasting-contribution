@@ -38,13 +38,15 @@ class TestSmape:
 
 class TestHoldoutMetrics:
     def test_compute_metrics_perfect(self):
-        actuals = np.array([10.0, 20.0, 30.0])
-        predicted = np.array([10.0, 20.0, 30.0])
+        actuals = np.array([10.0, 20.0, 30.0, 10.0, 20.0, 30.0, 10.0, 20.0])
+        predicted = np.array([10.0, 20.0, 30.0, 10.0, 20.0, 30.0, 10.0, 20.0])
         metrics = _compute_metrics(actuals, predicted, predicted * 0.8, predicted * 1.2)
         assert metrics.smape == pytest.approx(0.0)
         assert metrics.mae == pytest.approx(0.0)
+        assert metrics.mase == pytest.approx(0.0)
         assert metrics.coverage_90 == pytest.approx(1.0)
         assert metrics.accuracy_pct == pytest.approx(100.0)
+        assert metrics.accuracy_skill_pct == pytest.approx(100.0)
 
     def test_compute_metrics_with_nan_predictions(self):
         actuals = np.array([10.0, 20.0])

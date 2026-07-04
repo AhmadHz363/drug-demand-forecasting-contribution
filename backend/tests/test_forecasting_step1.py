@@ -52,6 +52,13 @@ MODEL_PERFORMANCE_COLUMNS = {
     "smape",
     "coverage_90",
     "evaluated_at",
+    "mase",
+    "training_run_id",
+    "demand_segment",
+    "data_quality_status",
+    "weight_sarima",
+    "weight_lgbm",
+    "weight_tft",
 }
 
 ARTIFACT_SUBDIRS = ("sarima", "lgbm", "tft", "stacking", "conformal")

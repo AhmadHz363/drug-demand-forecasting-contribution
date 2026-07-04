@@ -90,9 +90,15 @@ def apply_tobit_correction(df: pd.DataFrame) -> pd.DataFrame:
         else:
             mu_hat, log_sigma_hat = result.x
             sigma_hat = float(np.exp(log_sigma_hat))
-            imputed = _truncated_normal_mean(float(mu_hat), sigma_hat)
-            imputed = max(imputed, 0.0)
-            out.loc[stockout_mask, "total_quantity"] = imputed
+            if "rolling_mean_28d" in out.columns:
+                local_mu = out.loc[stockout_mask, "rolling_mean_28d"].astype(float).clip(lower=0.0)
+                imputed = local_mu.apply(
+                    lambda mu: max(_truncated_normal_mean(float(mu), sigma_hat), 0.0),
+                )
+                out.loc[stockout_mask, "total_quantity"] = imputed.values
+            else:
+                imputed = max(_truncated_normal_mean(float(mu_hat), sigma_hat), 0.0)
+                out.loc[stockout_mask, "total_quantity"] = imputed
 
     out.loc[stockout_mask, "correction_method"] = "tobit"
     return out

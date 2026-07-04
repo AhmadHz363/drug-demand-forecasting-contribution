@@ -14,7 +14,9 @@ from app.forecasting.constants import (
     ARTIFACTS_DIR,
     FORECAST_HORIZON,
     LOOKBACK_WINDOW_TFT,
+    LOOKBACK_WINDOW_TFT_SHORT,
     MIN_HISTORY_DAYS_TFT,
+    MIN_HISTORY_DAYS_TFT_SHORT,
     TFT_ATTENTION_HEAD_SIZE,
     TFT_BATCH_SIZE,
     TFT_ENABLE_MPS,
@@ -64,13 +66,23 @@ def _tft_accelerator() -> str:
     CUDA (NVIDIA) is used when available.  Apple MPS is **off by default**
     because pytorch-forecasting triggers uncatchable native buffer assertions
     on MPS that terminate the process.  Set ``TFT_ENABLE_MPS=1`` to opt in.
+
+    The env var is read at call time (not at module-import time) so the
+    server process can set it after Python has already imported this module.
+    PYTORCH_ENABLE_MPS_FALLBACK is also set here so that any operations not
+    yet implemented on MPS silently fall back to CPU instead of crashing.
     """
     global _MPS_SKIP_LOGGED
     import torch
 
+    # Re-read at call time so setting TFT_ENABLE_MPS=1 after import takes effect.
+    enable_mps = os.environ.get("TFT_ENABLE_MPS", "").lower() in {"1", "true", "yes"}
+
     if torch.cuda.is_available():
         return "cuda"
-    if TFT_ENABLE_MPS and torch.backends.mps.is_available():
+    if enable_mps and torch.backends.mps.is_available():
+        # Ensure ops not yet implemented on MPS fall back to CPU transparently.
+        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
         return "mps"
     if torch.backends.mps.is_available() and not _MPS_SKIP_LOGGED:
         _MPS_SKIP_LOGGED = True
@@ -91,9 +103,10 @@ def _tft_trainer_kwargs() -> dict:
 def _tft_map_location() -> str:
     import torch
 
+    enable_mps = os.environ.get("TFT_ENABLE_MPS", "").lower() in {"1", "true", "yes"}
     if torch.cuda.is_available():
         return "cuda"
-    if TFT_ENABLE_MPS and torch.backends.mps.is_available():
+    if enable_mps and torch.backends.mps.is_available():
         return "mps"
     return "cpu"
 
@@ -123,6 +136,24 @@ def _trim_training_frame(df: pd.DataFrame) -> pd.DataFrame:
     return trimmed
 
 
+def _tft_min_history_days(series_length: int) -> int:
+    """Allow shorter histories when the series is long enough for a reduced encoder."""
+    if series_length >= MIN_HISTORY_DAYS_TFT:
+        return MIN_HISTORY_DAYS_TFT
+    if series_length >= MIN_HISTORY_DAYS_TFT_SHORT:
+        return MIN_HISTORY_DAYS_TFT_SHORT
+    return MIN_HISTORY_DAYS_TFT
+
+
+def _tft_encoder_window(series_length: int) -> int:
+    """Pick encoder length — shorter window when full year is unavailable."""
+    if series_length >= MIN_HISTORY_DAYS_TFT:
+        return LOOKBACK_WINDOW_TFT
+    if series_length >= MIN_HISTORY_DAYS_TFT_SHORT:
+        return min(LOOKBACK_WINDOW_TFT_SHORT, series_length - FORECAST_HORIZON)
+    return LOOKBACK_WINDOW_TFT
+
+
 class TFTModel(BaseForecastingModel):
     def __init__(self) -> None:
         self._model = None
@@ -130,6 +161,7 @@ class TFTModel(BaseForecastingModel):
         self._skipped = False
         self._drug_code: Optional[str] = None
         self._prediction_cap: Optional[float] = None
+        self._encoder_window: int = LOOKBACK_WINDOW_TFT
 
     def _build_dataset(self, df: pd.DataFrame, drug_code: str, predict: bool = False):
         from pytorch_forecasting import TimeSeriesDataSet
@@ -139,7 +171,8 @@ class TFTModel(BaseForecastingModel):
         working["drug_code"] = drug_code
         working["time_idx"] = np.arange(len(working))
 
-        max_encoder = min(LOOKBACK_WINDOW_TFT, max(len(working) - FORECAST_HORIZON, 1))
+        encoder_cap = self._encoder_window or _tft_encoder_window(len(working))
+        max_encoder = min(encoder_cap, max(len(working) - FORECAST_HORIZON, 1))
         max_prediction = min(FORECAST_HORIZON, max(len(working) // 4, 1))
 
         if self._dataset_params is not None and predict:
@@ -181,15 +214,18 @@ class TFTModel(BaseForecastingModel):
         self._drug_code = drug_code
         self._skipped = False
         epochs = max_epochs if max_epochs is not None else TFT_MAX_EPOCHS
-        if len(df) < MIN_HISTORY_DAYS_TFT:
+        min_required = _tft_min_history_days(len(df))
+        if len(df) < min_required:
             logger.warning(
                 "TFT skipped for %s: only %d days of history (< %d required)",
                 drug_code,
                 len(df),
-                MIN_HISTORY_DAYS_TFT,
+                min_required,
             )
             self._skipped = True
             return
+
+        self._encoder_window = _tft_encoder_window(len(df))
 
         try:
             import lightning.pytorch as pl
@@ -252,7 +288,13 @@ class TFTModel(BaseForecastingModel):
             pickle.dump(self._dataset_params, handle)
 
         self._model = tft
-        logger.info("TFT trained for %s on %d days", drug_code, len(train_df))
+        logger.info(
+            "TFT trained for %s on %d days (encoder=%d, min_history=%d)",
+            drug_code,
+            len(train_df),
+            self._encoder_window,
+            min_required,
+        )
 
     def _max_prediction_length(self) -> int:
         if self._dataset_params is not None:

@@ -15,13 +15,24 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.forecasting.censored_demand.corrector import correct_demand
-from app.forecasting.constants import CONFORMAL_COVERAGE, LGBM_LOOKBACK_WINDOW
+from app.forecasting.constants import (
+    CONFORMAL_COVERAGE,
+    FORECAST_CHART_HISTORY_DAYS,
+    INTERVAL_P10_CLIFF_P50_THRESHOLD,
+    INTERVAL_WIDTH_SHRINK_TOLERANCE,
+    LGBM_LOOKBACK_WINDOW,
+)
 from app.forecasting.ensemble.conformal import (
     ConformalCalibrator,
     extend_tail_quantiles,
-    _mapie_path,
 )
-from app.forecasting.ensemble.stacking import StackingMetaLearner, _stacking_path
+from app.forecasting.ensemble.segment_artifacts import (
+    resolve_conformal_path,
+    resolve_stacking_path,
+)
+from app.forecasting.ensemble.stacking import StackingMetaLearner
+from app.forecasting.demand_segmentation import classify_demand_segment_from_frame
+from app.forecasting.model_adaptation import recent_cv2
 from app.forecasting.feature_engineering.pipeline import (
     build_feature_matrix,
     build_future_covariates,
@@ -34,12 +45,16 @@ from app.forecasting.schemas import (
     AttentionWeight,
     DailyForecastPoint,
     ForecastResponse,
+    HistoryPoint,
+    InferenceHealth,
     ModelWeightBreakdown,
     ShapFeature,
 )
+from app.forecasting.newsvendor import recommended_quantities, resolve_ven_class
 from app.forecasting.training.trainer import MODEL_REGISTRY
 from app.forecasting.prediction_bounds import demand_prediction_cap, sanitize_ensemble_predictions
 from app.models.forecast_result import ForecastResult
+from app.models.drug_catalog import DrugCatalog
 from app.models.model_performance import ModelPerformance
 from app.services.demand_aggregation import drug_has_receipt_history, get_receipt_date_bounds
 
@@ -92,8 +107,49 @@ def validate_forecast_quantiles(response: ForecastResponse) -> None:
             )
 
 
-def _conformal_available() -> bool:
-    return os.path.isfile(_mapie_path())
+def check_forecast_interval_sanity(response: ForecastResponse) -> list[str]:
+    """Return warnings for discontinuous interval growth or P10 cliffs."""
+    if response.error or len(response.forecast) < 2:
+        return []
+
+    warnings: list[str] = []
+    widths = [point.p90 - point.p10 for point in response.forecast]
+
+    for idx in range(1, len(widths)):
+        previous = widths[idx - 1]
+        current = widths[idx]
+        if previous > 0 and current < previous * INTERVAL_WIDTH_SHRINK_TOLERANCE:
+            warnings.append(
+                f"Interval width shrinks sharply at horizon step {idx + 1} "
+                f"({previous:.4f} -> {current:.4f}) for {response.drug_code}"
+            )
+
+    consecutive_zero_p10 = 0
+    for step, point in enumerate(response.forecast, start=1):
+        if point.p10 == 0.0 and point.p50 > INTERVAL_P10_CLIFF_P50_THRESHOLD:
+            consecutive_zero_p10 += 1
+        else:
+            consecutive_zero_p10 = 0
+        if consecutive_zero_p10 > 1:
+            warnings.append(
+                f"P10 collapsed to 0 for {consecutive_zero_p10} consecutive days "
+                f"while P50 > {INTERVAL_P10_CLIFF_P50_THRESHOLD} "
+                f"(from step {step - consecutive_zero_p10 + 1}) for {response.drug_code}"
+            )
+            break
+
+    return warnings
+
+
+def validate_forecast_interval_sanity(response: ForecastResponse) -> None:
+    """Raise when forecast intervals show suspicious discontinuities."""
+    issues = check_forecast_interval_sanity(response)
+    if issues:
+        raise ValueError("; ".join(issues))
+
+
+def _conformal_available(segment: str) -> bool:
+    return resolve_conformal_path(segment) is not None
 
 
 class DrugForecaster:
@@ -212,27 +268,59 @@ class DrugForecaster:
         p90 = p50 + spread
         return p50, p10, p90
 
+    def _lookup_ven_class(self, drug_code: str, db_session: Session) -> str:
+        row = (
+            db_session.query(DrugCatalog.ven_class)
+            .filter(DrugCatalog.drug_code == drug_code)
+            .first()
+        )
+        return resolve_ven_class(row[0] if row else None)
+
     def _ensemble_forecast(
         self,
         model_preds: dict[str, np.ndarray],
         horizon_days: int,
         *,
         prediction_cap: float,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, ModelWeightBreakdown]:
+        demand_segment: str,
+        history_days: int,
+        drug_cv2: float,
+        tft_available: bool,
+    ) -> tuple[
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        ModelWeightBreakdown,
+        InferenceHealth,
+    ]:
         sarima = model_preds["sarima"]
         lgbm = model_preds["lgbm"]
         tft = model_preds["tft"]
+        horizon_steps = np.arange(1, horizon_days + 1, dtype=int)
 
         sarima, lgbm, tft = sanitize_ensemble_predictions(sarima, lgbm, tft, prediction_cap)
 
-        if os.path.isfile(_stacking_path()):
-            stacker = StackingMetaLearner()
+        used_conformal = False
+        used_spread_fallback = False
+        used_stacking = False
+
+        stacking_path = resolve_stacking_path(demand_segment)
+        if stacking_path is not None:
+            used_stacking = True
+            stacker = StackingMetaLearner(segment=demand_segment)
             stacker.load()
             stacked, weights = stacker.predict(
                 sarima,
                 lgbm,
                 tft,
                 prediction_cap=prediction_cap,
+                demand_segment=demand_segment,
+                history_days=history_days,
+                recent_cv2=drug_cv2,
+                tft_available=tft_available,
+                horizon_steps=horizon_steps,
             )
         else:
             available = np.column_stack([sarima, lgbm, tft])
@@ -254,22 +342,53 @@ class DrugForecaster:
                     tft=0.0,
                 )
 
-        if _conformal_available():
+        if _conformal_available(demand_segment):
             try:
-                calibrator = ConformalCalibrator()
+                calibrator = ConformalCalibrator(segment=demand_segment)
                 calibrator.load()
-                p50, p10, p90 = calibrator.predict_interval(stacked)
-            except (ValueError, RuntimeError) as exc:
+                p50, p10, p90 = calibrator.predict_interval(
+                    stacked,
+                    horizon_steps=horizon_steps,
+                )
+                used_conformal = True
+            except (ValueError, RuntimeError, FileNotFoundError) as exc:
                 logger.warning(
-                    "Conformal interval prediction failed — using model spread fallback: %s",
+                    "Conformal interval prediction failed for segment '%s' — "
+                    "using model spread fallback: %s",
+                    demand_segment,
                     exc,
                 )
                 p50, p10, p90 = self._fallback_intervals(stacked, sarima, lgbm, tft)
+                used_spread_fallback = True
         else:
             p50, p10, p90 = self._fallback_intervals(stacked, sarima, lgbm, tft)
+            used_spread_fallback = True
+
+        if used_spread_fallback:
+            logger.info(
+                "Forecast for segment '%s' used spread-fallback intervals "
+                "(conformal_available=%s, conformal_used=%s)",
+                demand_segment,
+                _conformal_available(demand_segment),
+                used_conformal,
+            )
 
         p5, p10, p50, p90, p95 = extend_tail_quantiles(p50, p10, p90)
-        return p5[:horizon_days], p10[:horizon_days], p50[:horizon_days], p90[:horizon_days], p95[:horizon_days], weights
+        health = InferenceHealth(
+            demand_segment=demand_segment,
+            used_stacking=used_stacking,
+            used_conformal=used_conformal,
+            used_spread_fallback=used_spread_fallback,
+        )
+        return (
+            p5[:horizon_days],
+            p10[:horizon_days],
+            p50[:horizon_days],
+            p90[:horizon_days],
+            p95[:horizon_days],
+            weights,
+            health,
+        )
 
     def _forecast_dates(
         self,
@@ -282,6 +401,31 @@ class DrugForecaster:
             (last_date + pd.Timedelta(days=offset)).date()
             for offset in range(1, horizon_days + 1)
         ]
+
+    def _history_for_chart(
+        self,
+        corrected_df: pd.DataFrame,
+        *,
+        max_days: int = FORECAST_CHART_HISTORY_DAYS,
+    ) -> list[HistoryPoint]:
+        """Return recent raw receipt demand for chart context (not imputed values)."""
+        indexed = ensure_demand_date_index(corrected_df)
+        tail = indexed.tail(max_days)
+        qty_col = (
+            "observed_quantity"
+            if "observed_quantity" in tail.columns
+            else "total_quantity"
+        )
+        history: list[HistoryPoint] = []
+        for demand_ts, row in tail.iterrows():
+            demand_date = pd.Timestamp(demand_ts).date()
+            history.append(
+                HistoryPoint(
+                    date=demand_date,
+                    quantity=float(row[qty_col]),
+                )
+            )
+        return history
 
     def _compute_shap_features(
         self,
@@ -424,6 +568,13 @@ class DrugForecaster:
             feature_df,
         )
         corrected_df.attrs["drug_code"] = drug_code
+        demand_segment = classify_demand_segment_from_frame(corrected_df)
+        qty_col = (
+            "observed_quantity"
+            if "observed_quantity" in corrected_df.columns
+            else "total_quantity"
+        )
+        drug_cv2 = recent_cv2(corrected_df[qty_col].astype(float).values)
 
         model_preds = self._model_p50_predictions(
             corrected_df,
@@ -436,12 +587,20 @@ class DrugForecaster:
         prediction_cap = demand_prediction_cap(
             corrected_df["total_quantity"].astype(float).values,
         )
-        p5, p10, p50, p90, p95, weights = self._ensemble_forecast(
+        p5, p10, p50, p90, p95, weights, inference_health = self._ensemble_forecast(
             model_preds,
             horizon_days,
             prediction_cap=prediction_cap,
+            demand_segment=demand_segment,
+            history_days=len(corrected_df),
+            drug_cv2=drug_cv2,
+            tft_available="tft" in trained_models and not np.all(np.isnan(model_preds["tft"])),
         )
         forecast_dates = self._forecast_dates(corrected_df, horizon_days)
+
+        ven_class = self._lookup_ven_class(drug_code, db_session)
+        op_quantile, recommended = recommended_quantities(p10, p50, p90, ven_class)
+        recommended_total = float(np.sum(recommended))
 
         shap_features: Optional[list[ShapFeature]] = None
         if include_shap and "lgbm" in trained_models:
@@ -488,21 +647,31 @@ class DrugForecaster:
                     p50=float(p50[idx]),
                     p90=float(p90[idx]),
                     p95=float(p95[idx]),
+                    recommended_quantity=float(recommended[idx]),
                 )
                 for idx in range(horizon_days)
             ],
+            history=self._history_for_chart(corrected_df),
             shap_features=shap_features,
             attention_weights=attention_weights,
             uncertainty_note=UNCERTAINTY_NOTE,
             smape_last_validation=self._latest_smape(drug_code, db_session),
+            ven_class=ven_class,
+            operating_quantile=op_quantile,
+            recommended_quantity_total=recommended_total,
+            inference_health=inference_health,
         )
+
+        for warning in check_forecast_interval_sanity(response):
+            logger.warning("Forecast interval sanity: %s", warning)
 
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
-            "Forecast for %s completed in %.1fms (horizon=%d, shap=%s, attention=%s)",
+            "Forecast for %s completed in %.1fms (horizon=%d, segment=%s, shap=%s, attention=%s)",
             drug_code,
             elapsed_ms,
             horizon_days,
+            demand_segment,
             include_shap,
             include_attention,
         )

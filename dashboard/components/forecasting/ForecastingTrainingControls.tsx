@@ -80,13 +80,21 @@ export function ForecastingTrainingControls({
           ? smapeEntries.reduce((s, [, v]) => s + v, 0) / smapeEntries.length
           : null;
 
+      const skipped = result.skipped_drugs?.length ?? 0;
+      const flagged = result.flagged_drugs?.length ?? 0;
+      const drift = result.drift_alerts?.length ?? 0;
+      const qualityNote =
+        skipped || flagged || drift
+          ? ` · Skipped ${skipped} · Flagged ${flagged}${drift ? ` · Drift alerts ${drift}` : ""}`
+          : "";
+
       setTrainState({
         status: "success",
         message: `Ready — ${result.drugs_trained} drug${result.drugs_trained === 1 ? "" : "s"} trained`,
         summary:
-          avgSmape !== null
+          (avgSmape !== null
             ? `Avg validation sMAPE: ${avgSmape.toFixed(1)}% · Models: ${result.models_trained.join(", ")}`
-            : `Models: ${result.models_trained.join(", ")}`,
+            : `Models: ${result.models_trained.join(", ")}`) + qualityNote,
       });
       onModelsReady?.(true);
     } catch (err) {

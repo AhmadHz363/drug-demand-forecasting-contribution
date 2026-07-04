@@ -11,7 +11,9 @@ import type {
   PaginatedDrugCodeSearchResponse,
   PaginatedDrugListResponse,
   PaginatedCategoryListResponse,
+  DrugDetailResponse,
   PaginatedReceiptDrugSearchResponse,
+  PerformanceMonitoringResponse,
   TrainForecastingRequest,
   TrainForecastingResponse,
   LoginPayload,
@@ -161,6 +163,26 @@ export async function trainForecasting(
   return res.json();
 }
 
+export async function fetchForecastingPerformance(params?: {
+  drug_code?: string;
+  model_name?: string;
+  training_run_id?: string;
+  limit?: number;
+}): Promise<PerformanceMonitoringResponse> {
+  const search = new URLSearchParams();
+  if (params?.drug_code) search.set("drug_code", params.drug_code);
+  if (params?.model_name) search.set("model_name", params.model_name);
+  if (params?.training_run_id) search.set("training_run_id", params.training_run_id);
+  if (params?.limit) search.set("limit", String(params.limit));
+  const qs = search.toString();
+  const path = `/forecasting/performance${qs ? `?${qs}` : ""}`;
+  const res = await backendFetch(path);
+  if (!res.ok) {
+    throw new Error(await parseError(res, path));
+  }
+  return res.json();
+}
+
 export async function predictForecast(
   req: ForecastRequest,
 ): Promise<ForecastResponse> {
@@ -279,6 +301,21 @@ export async function listDrugs(
     params.set("q", trimmed);
   }
   const path = `/drugs?${params}`;
+  const res = await backendFetch(path);
+  if (!res.ok) {
+    throw new Error(await parseError(res, path));
+  }
+  return res.json();
+}
+
+export async function getDrugDetail(
+  drugCode: string,
+  lookbackDays = 365,
+): Promise<DrugDetailResponse> {
+  const params = new URLSearchParams({
+    lookback_days: String(lookbackDays),
+  });
+  const path = `/drugs/${encodeURIComponent(drugCode.trim())}?${params}`;
   const res = await backendFetch(path);
   if (!res.ok) {
     throw new Error(await parseError(res, path));

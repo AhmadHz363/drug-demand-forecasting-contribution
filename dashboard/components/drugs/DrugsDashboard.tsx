@@ -4,6 +4,7 @@ import { Pill, Search } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { Panel, PanelBody, PanelHeader, inputClass } from "@/components/cold-start/ui";
+import { DrugDetailModal } from "@/components/drugs/DrugDetailModal";
 import { listDrugs } from "@/lib/api";
 import type { DrugItem, PaginatedDrugListResponse } from "@/lib/types";
 
@@ -16,6 +17,7 @@ export function DrugsDashboard() {
   const [data, setData] = useState<PaginatedDrugListResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedDrug, setSelectedDrug] = useState<DrugItem | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -62,7 +64,7 @@ export function DrugsDashboard() {
       <Panel>
         <PanelHeader
           title="Known drugs"
-          description="Search by code, name, or category. Data is sourced from the drugs table linked to drug_receipts."
+          description="Search by code, name, or category. Click a row to view specs and demand history."
           action={
             data ? (
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
@@ -115,7 +117,20 @@ export function DrugsDashboard() {
                   </tr>
                 ) : (
                   data.items.map((drug: DrugItem) => (
-                    <tr key={drug.id} className="hover:bg-slate-50/80">
+                    <tr
+                      key={drug.id}
+                      className="cursor-pointer hover:bg-blue-50/60"
+                      onClick={() => setSelectedDrug(drug)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setSelectedDrug(drug);
+                        }
+                      }}
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`View details for ${drug.drug_name ?? drug.drug_code}`}
+                    >
                       <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-900">
                         {drug.drug_code}
                       </td>
@@ -162,6 +177,10 @@ export function DrugsDashboard() {
           )}
         </PanelBody>
       </Panel>
+
+      {selectedDrug && (
+        <DrugDetailModal drug={selectedDrug} onClose={() => setSelectedDrug(null)} />
+      )}
     </div>
   );
 }

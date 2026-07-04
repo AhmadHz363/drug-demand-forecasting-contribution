@@ -21,8 +21,8 @@ def artifacts_dir(tmp_path, monkeypatch) -> Iterator[str]:
     monkeypatch.setattr("app.forecasting.models.sarima_model.ARTIFACTS_DIR", path)
     monkeypatch.setattr("app.forecasting.models.lgbm_model.ARTIFACTS_DIR", path)
     monkeypatch.setattr("app.forecasting.models.tft_model.ARTIFACTS_DIR", path)
-    monkeypatch.setattr("app.forecasting.ensemble.stacking.ARTIFACTS_DIR", path)
-    monkeypatch.setattr("app.forecasting.ensemble.conformal.ARTIFACTS_DIR", path)
+    monkeypatch.setattr("app.forecasting.constants.ARTIFACTS_DIR", path)
+    monkeypatch.setattr("app.forecasting.ensemble.segment_artifacts.ARTIFACTS_DIR", path)
     yield path
 
 

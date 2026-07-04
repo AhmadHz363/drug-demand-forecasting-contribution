@@ -32,9 +32,11 @@ def _build_training_frame(n_days: int = 400, *, inject_stockout: bool = False) -
     base = add_rolling_features(base)
     base["bed_occupancy_rate"] = 0.75
     base["weekly_surgery_count"] = 50
+    base["external_features_is_default"] = 0
     base["supplier_avg_lead_time"] = 3.0
     base["supplier_lead_time_std"] = 1.0
     base["supplier_reliability_score"] = 0.85
+    base["supplier_features_is_default"] = 0
     base["em_corrected_quantity"] = base["total_quantity"].astype(float)
     return base.set_index("demand_date")
 

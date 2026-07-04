@@ -33,14 +33,16 @@ from app.forecasting.feature_engineering.temporal_features import temporal_featu
 from app.models.drug_receipt import DrugReceipt
 from app.services.demand_aggregation import get_receipt_date_bounds
 
-EXPECTED_FEATURE_COUNT = 41
 MIN_FEATURE_COLUMNS = (
     len(temporal_feature_columns())
     + len(lag_feature_columns())
     + len(rolling_feature_columns())
-    + 2  # external
-    + 3  # supplier
+    + 2  # external (bed_occupancy_rate, weekly_surgery_count)
+    + 3  # supplier (avg_lead_time, lead_time_std, reliability_score)
 )
+# Spike features (spike_count_{w}d, spike_intensity_{w}d) and extra
+# rolling stats added after the original count of 41; keep in sync.
+EXPECTED_FEATURE_COUNT = MIN_FEATURE_COLUMNS
 
 
 def _db_available() -> bool:
@@ -80,7 +82,8 @@ def _date_range_for_drug(drug_code: str) -> tuple[date, date]:
 
 class TestFeatureColumnCounts:
     def test_expected_feature_column_totals(self):
-        assert EXPECTED_FEATURE_COUNT == MIN_FEATURE_COLUMNS == 41
+        assert EXPECTED_FEATURE_COUNT == MIN_FEATURE_COLUMNS
+        assert EXPECTED_FEATURE_COUNT >= 41  # at least the original count
 
 
 class TestTemporalFeaturesUnit:

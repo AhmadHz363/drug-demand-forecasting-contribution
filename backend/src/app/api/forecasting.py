@@ -15,6 +15,7 @@ from app.forecasting.inference.forecaster import (
     NoTrainedModelsError,
     validate_forecast_quantiles,
 )
+from app.forecasting.performance_monitoring import get_performance_monitoring
 from app.forecasting.schemas import (
     BatchForecastRequest,
     ForecastRequest,
@@ -25,6 +26,7 @@ from app.forecasting.schemas import (
     ModelWeightBreakdown,
     PaginatedDrugCodeSearchResponse,
     PaginatedReceiptDrugSearchResponse,
+    PerformanceMonitoringResponse,
     ReceiptDrugOption,
     TrainForecastingRequest,
     TrainStatusResponse,
@@ -144,11 +146,36 @@ def train_forecasting_models(
         ) from exc
 
     logger.info(
-        "Forecasting training complete: drugs=%d models=%s",
+        "Forecasting training complete: drugs=%d models=%s run=%s",
         response.drugs_trained,
         response.models_trained,
+        response.training_run_id,
     )
     return response
+
+
+@router.get(
+    "/performance",
+    response_model=PerformanceMonitoringResponse,
+    summary="Model health metrics from training runs",
+    response_description=(
+        "Recent walk-forward sMAPE/MASE, coverage, weight snapshots, and drift flags."
+    ),
+)
+def get_forecasting_performance(
+    db: Annotated[Session, Depends(get_db)],
+    drug_code: Annotated[Optional[str], Query(min_length=1)] = None,
+    model_name: Annotated[Optional[str], Query(min_length=1)] = None,
+    training_run_id: Annotated[Optional[str], Query(min_length=1)] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> PerformanceMonitoringResponse:
+    return get_performance_monitoring(
+        db,
+        drug_code=drug_code.strip() if drug_code else None,
+        model_name=model_name.strip() if model_name else None,
+        training_run_id=training_run_id.strip() if training_run_id else None,
+        limit=limit,
+    )
 
 
 @router.post(

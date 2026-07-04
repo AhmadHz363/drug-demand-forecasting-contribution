@@ -52,6 +52,7 @@ def add_external_features(
         logger.warning("hospital_census table is empty — using default external feature values")
         out["bed_occupancy_rate"] = DEFAULT_BED_OCCUPANCY
         out["weekly_surgery_count"] = DEFAULT_WEEKLY_SURGERY_COUNT
+        out["external_features_is_default"] = 1
         return out
 
     census_df = pd.DataFrame(
@@ -80,6 +81,7 @@ def add_external_features(
         right_on="census_date",
         how="left",
     )
+    merged["external_features_is_default"] = merged["bed_occupancy_rate"].isna().astype(int)
     merged["bed_occupancy_rate"] = merged["bed_occupancy_rate"].fillna(DEFAULT_BED_OCCUPANCY)
     merged["weekly_surgery_count"] = (
         merged["weekly_surgery_count"].fillna(DEFAULT_WEEKLY_SURGERY_COUNT).astype(int)

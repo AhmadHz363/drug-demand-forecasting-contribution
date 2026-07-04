@@ -141,12 +141,12 @@ class TestPredictBatchEndpoint:
 class TestDrugForecasterEnsemble:
     def test_ensemble_forecast_without_artifacts(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "app.forecasting.inference.forecaster._stacking_path",
-            lambda: str(tmp_path / "missing.pkl"),
+            "app.forecasting.inference.forecaster.resolve_stacking_path",
+            lambda segment: None,
         )
         monkeypatch.setattr(
-            "app.forecasting.inference.forecaster._conformal_available",
-            lambda: False,
+            "app.forecasting.inference.forecaster.resolve_conformal_path",
+            lambda segment: None,
         )
 
         forecaster = DrugForecaster()
@@ -155,7 +155,12 @@ class TestDrugForecasterEnsemble:
             "lgbm": np.array([14.0, 16.0]),
             "tft": np.array([np.nan, np.nan]),
         }
-        p5, p10, p50, p90, p95, weights = forecaster._ensemble_forecast(model_preds, 2)
+        p5, p10, p50, p90, p95, weights = forecaster._ensemble_forecast(
+            model_preds,
+            2,
+            prediction_cap=100.0,
+            demand_segment="smooth",
+        )
 
         assert len(p50) == 2
         assert weights.sarima + weights.lgbm + weights.tft == pytest.approx(1.0)
