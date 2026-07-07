@@ -56,7 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const result = await apiLogin(payload);
       setAccessToken(result.access_token);
       setUser(result.user);
-      router.replace("/data-ingestion");
+      router.replace("/");
     },
     [router],
   );

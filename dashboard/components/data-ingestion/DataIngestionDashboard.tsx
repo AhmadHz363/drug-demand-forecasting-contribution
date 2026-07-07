@@ -56,6 +56,7 @@ export function DataIngestionDashboard() {
             result={result}
             error={error}
             fileName={fileName}
+            isUploading={isUploading}
             onReset={reset}
           />
         </div>

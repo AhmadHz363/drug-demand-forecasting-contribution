@@ -23,7 +23,7 @@ from app.forecasting.demand_segmentation import classify_demand_segment_from_fra
 from app.forecasting.model_adaptation import (
     adaptive_sarima_shrinkage,
     recent_cv2,
-    search_sarima_orders,
+    search_sarima_orders_cached,
     select_sarima_train_days,
 )
 from app.forecasting.models.base_model import BaseForecastingModel
@@ -82,7 +82,7 @@ class SarimaModel(BaseForecastingModel):
             as_consumption_demand(_target_series(working)),
             index=working.index,
         )
-        self._order, self._seasonal_order = search_sarima_orders(series)
+        self._order, self._seasonal_order = search_sarima_orders_cached(drug_code, series)
         exog = _holiday_exog(working)
 
         model = SARIMAX(
@@ -140,7 +140,7 @@ class SarimaModel(BaseForecastingModel):
             )
 
         forecast = self._result.get_forecast(steps=horizon_days, exog=future_holidays)
-        conf = forecast.conf_int(alpha=0.20)
+        conf = forecast.conf_int(alpha=0.10)
 
         p50_raw = forecast.predicted_mean.clip(lower=0.0).astype(float)
         p50 = (1.0 - shrink) * p50_raw + shrink * recent_level

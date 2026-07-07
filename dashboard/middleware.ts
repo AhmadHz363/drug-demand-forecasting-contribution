@@ -18,7 +18,7 @@ export function middleware(request: NextRequest) {
 
   if (PUBLIC_PATHS.has(pathname)) {
     if (token) {
-      return NextResponse.redirect(new URL("/data-ingestion", request.url));
+      return NextResponse.redirect(new URL("/", request.url));
     }
     return NextResponse.next();
   }

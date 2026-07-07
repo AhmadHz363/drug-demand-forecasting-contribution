@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Optional
 
 import numpy as np
@@ -21,6 +22,12 @@ from app.forecasting.constants import (
     SARIMA_TRAIN_DAYS,
     SARIMA_TRAIN_DAYS_SHORT,
 )
+
+# Thread-safe per-drug SARIMA order cache.  Populated on first auto_arima call
+# and reused for all subsequent walk-forward fold models for the same drug,
+# reducing expensive grid searches from O(4 × n_splits) to O(1) per drug.
+_sarima_order_cache: dict[str, tuple[tuple, tuple]] = {}
+_sarima_order_cache_lock = threading.Lock()
 
 SEGMENT_ENCODING = {
     "smooth": 0.0,
@@ -138,6 +145,39 @@ def search_sarima_orders(
         return SARIMA_ORDER, SARIMA_SEASONAL_ORDER
     except Exception:
         return SARIMA_ORDER, SARIMA_SEASONAL_ORDER
+
+
+def search_sarima_orders_cached(
+    drug_code: str,
+    series: pd.Series,
+    *,
+    max_p: int = 2,
+    max_q: int = 2,
+) -> tuple[tuple[int, int, int], tuple[int, int, int, int]]:
+    """
+    Cached wrapper around :func:`search_sarima_orders`.
+
+    Returns the previously-discovered best SARIMA order for *drug_code* when
+    available, avoiding repeated expensive auto_arima calls during walk-forward
+    validation folds.  The cache lives for the lifetime of the process (cleared
+    between training runs via :func:`clear_sarima_order_cache`).
+    """
+    with _sarima_order_cache_lock:
+        if drug_code in _sarima_order_cache:
+            return _sarima_order_cache[drug_code]
+
+    result = search_sarima_orders(series, max_p=max_p, max_q=max_q)
+
+    with _sarima_order_cache_lock:
+        _sarima_order_cache[drug_code] = result
+
+    return result
+
+
+def clear_sarima_order_cache() -> None:
+    """Remove all cached SARIMA orders (call between independent training runs)."""
+    with _sarima_order_cache_lock:
+        _sarima_order_cache.clear()
 
 
 def build_stacking_meta_features(

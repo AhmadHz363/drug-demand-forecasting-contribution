@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 
 import numpy as np
@@ -108,6 +109,13 @@ def accuracy_skill_from_mase(mase_val: float) -> float:
     if mase_val == float("inf") or mase_val != mase_val:
         return 0.0
     return max(0.0, min(100.0, (1.0 - mase_val) * 100.0))
+
+
+def finite_mase_or_none(mase_val: float | None) -> float | None:
+    """Return MASE for persistence; non-finite values (e.g. inf on sparse series) become None."""
+    if mase_val is None or not math.isfinite(mase_val):
+        return None
+    return float(mase_val)
 
 
 def build_evaluation_mask(

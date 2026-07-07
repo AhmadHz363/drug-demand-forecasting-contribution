@@ -45,10 +45,12 @@ from app.forecasting.evaluation_metrics import (
 )
 
 __all__ = [
+    "WalkForwardResult",
     "accuracy_from_smape",
     "accuracy_skill_from_mase",
     "mase",
     "smape",
+    "walk_forward_full",
     "walk_forward_smape",
     "walk_forward_coverage",
     "walk_forward_mase",
@@ -72,29 +74,65 @@ def _walk_forward_tft_epochs() -> int:
     return min(TFT_WALK_FORWARD_MAX_EPOCHS, ratio_epochs)
 
 
-def walk_forward_smape(
+class WalkForwardResult:
+    """Aggregated metrics and out-of-fold predictions from a single walk-forward pass."""
+
+    __slots__ = ("smape", "coverage", "mase", "oof_p50", "oof_actuals", "oof_horizon_steps")
+
+    def __init__(
+        self,
+        smape: float,
+        coverage: float,
+        mase: float | None,
+        oof_p50: np.ndarray,
+        oof_actuals: np.ndarray,
+        oof_horizon_steps: np.ndarray,
+    ) -> None:
+        self.smape = smape
+        self.coverage = coverage
+        self.mase = mase
+        self.oof_p50 = oof_p50
+        self.oof_actuals = oof_actuals
+        self.oof_horizon_steps = oof_horizon_steps
+
+
+def walk_forward_full(
     model: BaseForecastingModel,
     df: pd.DataFrame,
     drug_code: str,
     n_splits: int = WALK_FORWARD_N_SPLITS,
     test_horizon: int = WALK_FORWARD_TEST_HORIZON,
-) -> float:
+) -> WalkForwardResult:
     """
-    Performs walk-forward validation:
-    - Splits the time series into n_splits folds
-    - For each fold: train on all data before the fold, predict the fold
-    - Computes sMAPE between predicted P50 and actual demand
-    - Returns average sMAPE across all folds
+    Single walk-forward pass that simultaneously computes sMAPE, coverage,
+    MASE, and collects out-of-fold P50 predictions for ensemble fitting.
+
+    Previously the trainer ran 4 separate walk-forward loops per model per drug
+    (smape, coverage, mase, OOF collection), each training ``n_splits`` fold
+    models.  This function consolidates all four into one loop, reducing total
+    fold trainings from ``4 × n_splits`` to ``n_splits``.
     """
     n = len(df)
     total_test = n_splits * test_horizon
     if n <= total_test:
         raise ValueError(
-            f"Need more than {total_test} rows for {n_splits} folds of horizon {test_horizon}, got {n}"
+            f"Need more than {total_test} rows for {n_splits} folds of "
+            f"horizon {test_horizon}, got {n}"
         )
 
     model_class = type(model)
-    scores: list[float] = []
+    model_name = _model_registry_name(model)
+
+    smape_scores: list[float] = []
+    fold_mases: list[float] = []
+    covered = 0
+    total_pts = 0
+    oof_p50: list[float] = []
+    oof_actuals: list[float] = []
+    oof_steps: list[int] = []
+
+    lgbm_preds_by_step: dict[int, list[float]] = {}
+    lgbm_actuals_by_step: dict[int, list[float]] = {}
 
     for fold in range(n_splits):
         test_start = n - total_test + fold * test_horizon
@@ -107,29 +145,95 @@ def walk_forward_smape(
             _train_fold_model(fold_model, model_class, train_df, drug_code)
         except ValueError as exc:
             logger.warning("Walk-forward fold %d skipped for %s: %s", fold, drug_code, exc)
+            oof_p50.extend([float("nan")] * test_horizon)
+            oof_actuals.extend([0.0] * test_horizon)
+            oof_steps.extend(range(1, test_horizon + 1))
             continue
 
-        pred_df = _predict_fold(
-            fold_model,
-            _model_registry_name(fold_model),
-            train_df,
-            history_df,
-            test_horizon,
-        )
-        if pred_df is None:
-            continue
+        pred_df = _predict_fold(fold_model, model_name, train_df, history_df, test_horizon)
 
-        actuals = as_consumption_demand(
+        fold_actuals = as_consumption_demand(
             df.iloc[test_start:test_end]["total_quantity"].astype(float).values,
         )
-        predicted = pred_df["p50"].astype(float).values
-        fold_scores = [smape(a, p) for a, p in zip(actuals, predicted)]
-        scores.extend(fold_scores)
+        oof_actuals.extend(fold_actuals.tolist())
+        oof_steps.extend(range(1, test_horizon + 1))
 
-    if not scores:
+        if pred_df is None:
+            oof_p50.extend([float("nan")] * test_horizon)
+            continue
+
+        predicted = pred_df["p50"].astype(float).values
+        lower = pred_df["p10"].astype(float).values
+        upper = pred_df["p90"].astype(float).values
+
+        oof_p50.extend(predicted.tolist())
+
+        # sMAPE
+        for a, p in zip(fold_actuals, predicted):
+            smape_scores.append(smape(a, p))
+
+        # Coverage (P10–P90)
+        covered += int(((fold_actuals >= lower) & (fold_actuals <= upper)).sum())
+        total_pts += len(fold_actuals)
+
+        # MASE
+        try:
+            fold_mases.append(mase(fold_actuals, predicted))
+        except Exception:
+            pass
+
+        # LGBM recursive drift tracking
+        if model_name == "lgbm":
+            for step_idx, (pv, av) in enumerate(zip(predicted, fold_actuals), start=1):
+                lgbm_preds_by_step.setdefault(step_idx, []).append(float(pv))
+                lgbm_actuals_by_step.setdefault(step_idx, []).append(float(av))
+
+    if not smape_scores:
         raise ValueError(f"No walk-forward folds completed for {drug_code}")
 
-    return float(sum(scores) / len(scores))
+    if lgbm_preds_by_step:
+        drift = measure_lgbm_recursive_drift(lgbm_preds_by_step, lgbm_actuals_by_step)
+        if drift:
+            step1 = drift.get(1)
+            step_last = drift.get(max(drift))
+            if step1 is not None and step_last is not None and step1 > 0:
+                logger.info(
+                    "LGBM recursive drift for %s: step-1 MAE=%.3f, step-%d MAE=%.3f (ratio=%.2f)",
+                    drug_code,
+                    step1,
+                    max(drift),
+                    step_last,
+                    step_last / step1,
+                )
+
+    avg_smape = float(sum(smape_scores) / len(smape_scores))
+    avg_coverage = float(covered / total_pts) if total_pts > 0 else 0.0
+    avg_mase = float(sum(fold_mases) / len(fold_mases)) if fold_mases else None
+
+    return WalkForwardResult(
+        smape=avg_smape,
+        coverage=avg_coverage,
+        mase=avg_mase,
+        oof_p50=np.asarray(oof_p50, dtype=float),
+        oof_actuals=np.asarray(oof_actuals, dtype=float),
+        oof_horizon_steps=np.asarray(oof_steps, dtype=int),
+    )
+
+
+def walk_forward_smape(
+    model: BaseForecastingModel,
+    df: pd.DataFrame,
+    drug_code: str,
+    n_splits: int = WALK_FORWARD_N_SPLITS,
+    test_horizon: int = WALK_FORWARD_TEST_HORIZON,
+) -> float:
+    """
+    Performs walk-forward validation.
+
+    Prefer :func:`walk_forward_full` when also needing coverage, MASE, or OOF
+    predictions — it computes all four in a single fold-training pass.
+    """
+    return walk_forward_full(model, df, drug_code, n_splits, test_horizon).smape
 
 
 def walk_forward_mase(
@@ -140,49 +244,10 @@ def walk_forward_mase(
     test_horizon: int = WALK_FORWARD_TEST_HORIZON,
 ) -> float:
     """Average MASE across walk-forward folds (seasonal-naive scaled)."""
-    n = len(df)
-    total_test = n_splits * test_horizon
-    if n <= total_test:
-        raise ValueError(
-            f"Need more than {total_test} rows for {n_splits} folds of horizon {test_horizon}, got {n}"
-        )
-
-    model_class = type(model)
-    fold_mases: list[float] = []
-
-    for fold in range(n_splits):
-        test_start = n - total_test + fold * test_horizon
-        test_end = test_start + test_horizon
-        train_df = df.iloc[:test_start]
-        history_df = df.iloc[:test_end]
-
-        fold_model = model_class()
-        try:
-            _train_fold_model(fold_model, model_class, train_df, drug_code)
-        except ValueError as exc:
-            logger.warning("Walk-forward fold %d skipped for %s: %s", fold, drug_code, exc)
-            continue
-
-        pred_df = _predict_fold(
-            fold_model,
-            _model_registry_name(fold_model),
-            train_df,
-            history_df,
-            test_horizon,
-        )
-        if pred_df is None:
-            continue
-
-        actuals = as_consumption_demand(
-            df.iloc[test_start:test_end]["total_quantity"].astype(float).values,
-        )
-        predicted = pred_df["p50"].astype(float).values
-        fold_mases.append(mase(actuals, predicted))
-
-    if not fold_mases:
-        raise ValueError(f"No walk-forward folds completed for {drug_code}")
-
-    return float(sum(fold_mases) / len(fold_mases))
+    result = walk_forward_full(model, df, drug_code, n_splits, test_horizon)
+    if result.mase is None:
+        raise ValueError(f"No MASE computed for {drug_code}")
+    return result.mase
 
 
 def _train_fold_model(
@@ -223,47 +288,17 @@ def walk_forward_coverage(
     n_splits: int = WALK_FORWARD_N_SPLITS,
     test_horizon: int = WALK_FORWARD_TEST_HORIZON,
 ) -> float:
-    """Fraction of walk-forward test points falling inside the model P10–P90 band."""
+    """
+    Fraction of walk-forward test points falling inside the model P10–P90 band.
+
+    Prefer :func:`walk_forward_full` when also needing sMAPE, MASE, or OOF
+    predictions — it computes all four in a single fold-training pass.
+    """
     n = len(df)
     total_test = n_splits * test_horizon
     if n <= total_test:
         return 0.0
-
-    model_class = type(model)
-    covered = 0
-    total = 0
-
-    for fold in range(n_splits):
-        test_start = n - total_test + fold * test_horizon
-        test_end = test_start + test_horizon
-        train_df = df.iloc[:test_start]
-        history_df = df.iloc[:test_end]
-
-        fold_model = model_class()
-        try:
-            _train_fold_model(fold_model, model_class, train_df, drug_code)
-        except ValueError as exc:
-            logger.warning("Coverage fold %d skipped for %s: %s", fold, drug_code, exc)
-            continue
-
-        model_name = model_class.__name__.replace("Model", "").lower()
-        if model_name == "lightgbm":
-            model_name = "lgbm"
-        pred_df = _predict_fold(fold_model, model_name, train_df, history_df, test_horizon)
-        if pred_df is None:
-            continue
-
-        actuals = as_consumption_demand(
-            df.iloc[test_start:test_end]["total_quantity"].astype(float).values,
-        )
-        lower = pred_df["p10"].astype(float).values
-        upper = pred_df["p90"].astype(float).values
-        covered += int(((actuals >= lower) & (actuals <= upper)).sum())
-        total += len(actuals)
-
-    if total == 0:
-        return 0.0
-    return float(covered / total)
+    return walk_forward_full(model, df, drug_code, n_splits, test_horizon).coverage
 
 
 def measure_lgbm_recursive_drift(
@@ -292,9 +327,17 @@ def collect_walk_forward_predictions(
     model_classes: dict[str, type[BaseForecastingModel]],
     n_splits: int = WALK_FORWARD_N_SPLITS,
     test_horizon: int = WALK_FORWARD_TEST_HORIZON,
+    *,
+    precomputed_oof: dict[str, WalkForwardResult] | None = None,
 ) -> Optional[dict[str, np.ndarray]]:
     """
     Collect out-of-fold P50 predictions from walk-forward validation.
+
+    When *precomputed_oof* is provided (a ``{model_name: WalkForwardResult}``
+    dict populated by the trainer's :func:`walk_forward_full` calls), the
+    function assembles the output from cached results instead of running
+    additional fold-training loops.  Pass ``None`` to fall back to the
+    original self-contained multi-fold behaviour (used externally or in tests).
 
     Returns arrays keyed by model name plus ``actuals``, or None when the
     series is too short for the configured fold layout.
@@ -304,7 +347,24 @@ def collect_walk_forward_predictions(
     if n <= total_test:
         return None
 
-    collected: dict[str, list[float]] = {name: [] for name in model_classes}
+    # Fast path: assemble from already-computed WalkForwardResult objects.
+    if precomputed_oof is not None and precomputed_oof:
+        # All results share the same actuals / horizon_steps arrays.
+        reference = next(iter(precomputed_oof.values()))
+        collected: dict[str, np.ndarray] = {}
+        for name in model_classes:
+            if name in precomputed_oof:
+                collected[name] = precomputed_oof[name].oof_p50
+            else:
+                collected[name] = np.full(len(reference.oof_actuals), np.nan)
+        return {
+            **collected,
+            "actuals": reference.oof_actuals,
+            "horizon_steps": reference.oof_horizon_steps,
+        }
+
+    # Slow path: run the full fold-training loop (backward-compatible).
+    raw_collected: dict[str, list[float]] = {name: [] for name in model_classes}
     actuals: list[float] = []
     horizon_steps: list[int] = []
     lgbm_preds_by_step: dict[int, list[float]] = {}
@@ -327,10 +387,10 @@ def collect_walk_forward_predictions(
                 _train_fold_model(fold_model, model_class, train_df, drug_code)
                 pred_df = _predict_fold(fold_model, name, train_df, history_df, test_horizon)
                 if pred_df is None:
-                    collected[name].extend([float("nan")] * test_horizon)
+                    raw_collected[name].extend([float("nan")] * test_horizon)
                     continue
                 p50_values = pred_df["p50"].astype(float).tolist()
-                collected[name].extend(p50_values)
+                raw_collected[name].extend(p50_values)
                 if name == "lgbm":
                     for step_idx, (pred_val, act_val) in enumerate(
                         zip(p50_values, fold_actuals),
@@ -346,7 +406,7 @@ def collect_walk_forward_predictions(
                     name,
                     exc,
                 )
-                collected[name].extend([float("nan")] * test_horizon)
+                raw_collected[name].extend([float("nan")] * test_horizon)
 
     if lgbm_preds_by_step:
         drift = measure_lgbm_recursive_drift(lgbm_preds_by_step, lgbm_actuals_by_step)
@@ -364,7 +424,7 @@ def collect_walk_forward_predictions(
                 )
 
     return {
-        **{name: np.asarray(values, dtype=float) for name, values in collected.items()},
+        **{name: np.asarray(values, dtype=float) for name, values in raw_collected.items()},
         "actuals": np.asarray(actuals, dtype=float),
         "horizon_steps": np.asarray(horizon_steps, dtype=int),
     }

@@ -12,6 +12,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.forecasting.censored_demand.corrector import correct_demand
+from app.forecasting.model_adaptation import clear_sarima_order_cache
 from app.forecasting.constants import (
     DEMAND_SEGMENTS,
     GLOBAL_DEMAND_SEGMENT,
@@ -25,6 +26,7 @@ from app.forecasting.data_quality import (
 )
 from app.forecasting.demand_segmentation import classify_demand_segment_from_frame
 from app.forecasting.drift_detection import assess_metric_drift
+from app.forecasting.evaluation_metrics import finite_mase_or_none
 from app.forecasting.model_adaptation import recent_cv2
 from app.forecasting.ensemble.conformal import ConformalCalibrator
 from app.forecasting.ensemble.stacking import StackingMetaLearner
@@ -35,7 +37,9 @@ from app.forecasting.models.sarima_model import SarimaModel
 from app.forecasting.models.tft_model import TFTModel
 from app.forecasting.schemas import DrugQualitySummary, TrainStatusResponse
 from app.forecasting.training.walk_forward import (
+    WalkForwardResult,
     collect_walk_forward_predictions,
+    walk_forward_full,
     walk_forward_coverage,
     walk_forward_mase,
     walk_forward_smape,
@@ -100,27 +104,31 @@ class ForecastingTrainer:
         corrected_df: pd.DataFrame,
         drug_code: str,
         force_retrain: bool,
-    ) -> tuple[bool, Optional[str], Optional[float], Optional[float], Optional[float]]:
+    ) -> tuple[bool, Optional[str], Optional[float], Optional[float], Optional[float], Optional[WalkForwardResult]]:
         if not force_retrain and model.is_trained(drug_code):
             logger.info(
                 "Skipping %s for %s — already trained",
                 model_name,
                 drug_code,
             )
-            return False, None, None, None, None
+            return False, None, None, None, None, None
 
         model.train(corrected_df, drug_code)
         if model_name == "tft" and getattr(model, "_skipped", False):
-            return False, None, None, None, None
+            return False, None, None, None, None, None
 
         artifact_path = model.save(drug_code)
-        smape = walk_forward_smape(model, corrected_df, drug_code)
-        coverage = walk_forward_coverage(model, corrected_df, drug_code)
+
+        # Single walk-forward pass replaces the previous 4 separate loops
+        # (smape, coverage, mase, OOF collection), cutting fold trainings
+        # from 4 × n_splits down to n_splits per model per drug.
         try:
-            mase = walk_forward_mase(model, corrected_df, drug_code)
-        except ValueError:
-            mase = None
-        return True, artifact_path, smape, coverage, mase
+            wf = walk_forward_full(model, corrected_df, drug_code)
+        except ValueError as exc:
+            logger.warning("Walk-forward skipped for %s/%s: %s", model_name, drug_code, exc)
+            return True, artifact_path, float("nan"), 0.0, None, None
+
+        return True, artifact_path, wf.smape, wf.coverage, wf.mase, wf
 
     def _fit_ensemble(
         self,
@@ -239,6 +247,10 @@ class ForecastingTrainer:
         if not valid_models:
             raise ValueError("No valid models requested. Choose from: sarima, lgbm, tft.")
 
+        # Reset the per-drug SARIMA order cache so stale orders from a previous
+        # training run don't bleed into the new one.
+        clear_sarima_order_cache()
+
         training_run_id = str(uuid.uuid4())
         artifacts_saved: list[str] = []
         models_trained: set[str] = set()
@@ -252,6 +264,9 @@ class ForecastingTrainer:
         all_lgbm: list[float] = []
         all_tft: list[float] = []
         all_actuals: list[float] = []
+        # Per-drug OOF results keyed {drug_code: {model_name: WalkForwardResult}}.
+        # Used to build ensemble input without an extra walk-forward pass.
+        drug_oof_results: dict[str, dict[str, WalkForwardResult]] = {}
         segment_buckets: dict[str, dict[str, list[float]]] = {
             GLOBAL_DEMAND_SEGMENT: self._empty_segment_bucket(),
             **{segment: self._empty_segment_bucket() for segment in DEMAND_SEGMENTS},
@@ -311,10 +326,12 @@ class ForecastingTrainer:
                         MIN_HISTORY_DAYS_SARIMA,
                     )
 
+                drug_oof_results[drug_code] = {}
+
                 for model_name in valid_models:
                     model = MODEL_REGISTRY[model_name]()
                     try:
-                        trained, path, smape, coverage, mase = self._train_single_model(
+                        trained, path, smape, coverage, mase, wf_result = self._train_single_model(
                             model_name,
                             model,
                             corrected_df,
@@ -329,6 +346,9 @@ class ForecastingTrainer:
                         artifacts_saved.append(path)
                         per_drug_smape[drug_code][model_name] = float(smape)
 
+                        if wf_result is not None:
+                            drug_oof_results[drug_code][model_name] = wf_result
+
                         prev_row = (
                             db_session.query(ModelPerformance)
                             .filter(
@@ -338,11 +358,12 @@ class ForecastingTrainer:
                             .order_by(ModelPerformance.evaluated_at.desc())
                             .first()
                         )
+                        stored_mase = finite_mase_or_none(mase)
                         drift = assess_metric_drift(
                             float(prev_row.smape) if prev_row else None,
                             float(smape),
                             float(prev_row.mase) if prev_row and prev_row.mase is not None else None,
-                            float(mase) if mase is not None else None,
+                            stored_mase,
                         )
                         if drift.has_drift:
                             if drift.smape_degraded and drift.smape_delta_pct is not None:
@@ -360,7 +381,7 @@ class ForecastingTrainer:
                                 model_name=model_name,
                                 smape=float(smape),
                                 coverage_90=float(coverage or 0.0),
-                                mase=float(mase) if mase is not None else None,
+                                mase=stored_mase,
                                 training_run_id=training_run_id,
                                 demand_segment=demand_segment,
                                 data_quality_status=quality.status,
@@ -384,6 +405,8 @@ class ForecastingTrainer:
                 if drug_had_success:
                     drugs_trained += 1
 
+                # Assemble ensemble OOF predictions from already-cached WalkForwardResults
+                # when available, avoiding a second walk-forward pass per model.
                 stack_models: dict[str, type[BaseForecastingModel]] = {}
                 for name in valid_models:
                     if name in per_drug_smape[drug_code]:
@@ -392,10 +415,12 @@ class ForecastingTrainer:
                         stack_models[name] = MODEL_REGISTRY[name]
 
                 if stack_models:
+                    precomputed = drug_oof_results.get(drug_code) or None
                     preds = collect_walk_forward_predictions(
                         corrected_df,
                         drug_code,
                         stack_models,
+                        precomputed_oof=precomputed,
                     )
                     if preds is not None:
                         qty_col = (

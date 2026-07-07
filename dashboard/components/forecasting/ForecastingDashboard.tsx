@@ -9,6 +9,7 @@ import { ModelHealthMonitoringPanel } from "@/components/forecasting/ModelHealth
 import { ForecastingErrorPanel } from "@/components/forecasting/ForecastingErrorPanel";
 import { ForecastingResultsTabs } from "@/components/forecasting/ForecastingResultsTabs";
 import { ForecastingTrainingControls } from "@/components/forecasting/ForecastingTrainingControls";
+import { TrainingSuggestionsPanel } from "@/components/forecasting/TrainingSuggestionsPanel";
 import {
   ForecastingWorkflowStepper,
   scrollToSection,
@@ -77,6 +78,8 @@ export function ForecastingDashboard() {
           hasPrediction={Boolean(data)}
           activeStep={activeStep}
         />
+
+        <TrainingSuggestionsPanel />
 
         <ForecastingTrainingControls onModelsReady={setModelsReady} />
 

@@ -9,6 +9,7 @@ from app.api.cold_start import router as cold_start_router
 from app.api.deps import get_current_user
 from app.api.drugs import router as drugs_router
 from app.api.forecasting import router as forecasting_router
+from app.api.overview import router as overview_router
 from app.api.receipts import router as receipts_router
 from app.core.config import settings
 
@@ -51,6 +52,7 @@ app = FastAPI(
         },
         {"name": "auth", "description": "JWT login and user accounts."},
         {"name": "health", "description": "Service liveness."},
+        {"name": "overview", "description": "Aggregated KPIs across all system modules."},
     ],
 )
 
@@ -73,6 +75,7 @@ app.add_middleware(
 _auth_required = [Depends(get_current_user)] if settings.auth_enabled else []
 
 app.include_router(auth_router)
+app.include_router(overview_router, dependencies=_auth_required)
 app.include_router(receipts_router, dependencies=_auth_required)
 app.include_router(cold_start_router, dependencies=_auth_required)
 app.include_router(forecasting_router, dependencies=_auth_required)

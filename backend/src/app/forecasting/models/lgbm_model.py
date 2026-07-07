@@ -16,6 +16,7 @@ from app.forecasting.constants import (
     LGBM_QUANTILES,
     LGBM_VALID_FRACTION,
     MIN_HISTORY_DAYS_LGBM,
+    SHAP_MAX_SAMPLE_ROWS,
 )
 from app.forecasting.demand_segmentation import classify_demand_segment_from_frame
 from app.forecasting.model_adaptation import (
@@ -168,8 +169,13 @@ class LightGBMModel(BaseForecastingModel):
         if p50_booster is None:
             return
 
+        # Subsample for SHAP to avoid expensive full-dataset computation.
+        x_shap = x_train
+        if len(x_train) > SHAP_MAX_SAMPLE_ROWS:
+            x_shap = x_train.sample(n=SHAP_MAX_SAMPLE_ROWS, random_state=42)
+
         explainer = shap.TreeExplainer(p50_booster)
-        shap_values = explainer.shap_values(x_train)
+        shap_values = explainer.shap_values(x_shap)
         mean_abs = np.abs(shap_values).mean(axis=0)
         summary = {
             feature: float(value)
@@ -244,8 +250,11 @@ class LightGBMModel(BaseForecastingModel):
             raise RuntimeError("LightGBM model is not trained. Call train() or load() first.")
 
         working = ensure_demand_date_index(df)
+        # Prefer EM-corrected demand for recursive history to match training target,
+        # which eliminates stockout zeros from polluting the anchor/drift guard.
+        qty_col = "em_corrected_quantity" if "em_corrected_quantity" in working.columns else "total_quantity"
         qty = pd.Series(
-            as_consumption_demand(working["total_quantity"]),
+            as_consumption_demand(working[qty_col]),
             index=working.index,
         )
         median_qty = float(qty.median())

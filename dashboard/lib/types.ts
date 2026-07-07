@@ -308,6 +308,94 @@ export interface PaginatedCategoryListResponse {
   total_pages: number;
 }
 
+// ── Overview ──────────────────────────────────────────────────────────────────
+
+export interface TimeSeriesPoint {
+  period: string;
+  receipt_count: number;
+  total_quantity: number;
+}
+
+export interface CenterSummary {
+  center_syn_id: string;
+  receipt_count: number;
+}
+
+export interface ModelPerformanceSummary {
+  model_name: string;
+  avg_smape: number;
+  avg_coverage_90: number;
+  record_count: number;
+}
+
+export interface DrugSummary {
+  drug_code: string;
+  drug_name?: string | null;
+  drug_category?: string | null;
+  receipt_count: number;
+}
+
+export interface CategorySummary {
+  category_code: string;
+  name?: string | null;
+  drug_count: number;
+  receipt_count: number;
+}
+
+export interface GraduationDistribution {
+  cold_start_only: number;
+  blended: number;
+  full_ensemble: number;
+}
+
+export interface IngestionKPIs {
+  total_receipt_rows: number;
+  distinct_drug_codes: number;
+  distinct_centers: number;
+  first_receipt_date?: string | null;
+  last_receipt_date?: string | null;
+  total_quantity: number;
+  receipt_trend: TimeSeriesPoint[];
+  top_centers: CenterSummary[];
+}
+
+export interface DrugRegistryKPIs {
+  total_drugs: number;
+  graduation_distribution: GraduationDistribution;
+  top_drugs: DrugSummary[];
+}
+
+export interface CategoryRegistryKPIs {
+  total_categories: number;
+  top_categories: CategorySummary[];
+}
+
+export interface ColdStartKPIs {
+  embedder_trained: boolean;
+  maml_trained: boolean;
+}
+
+export interface ForecastingKPIs {
+  total_forecasted_drugs: number;
+  avg_smape?: number | null;
+  avg_coverage_90?: number | null;
+  models_evaluated: string[];
+  latest_training_run_id?: string | null;
+  total_performance_records: number;
+  model_performance: ModelPerformanceSummary[];
+}
+
+export interface OverviewResponse {
+  ingestion: IngestionKPIs;
+  drug_registry: DrugRegistryKPIs;
+  category_registry: CategoryRegistryKPIs;
+  cold_start: ColdStartKPIs;
+  forecasting: ForecastingKPIs;
+  generated_at: string;
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
 export interface AuthUser {
   id: number;
   email: string;
