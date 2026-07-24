@@ -39,7 +39,7 @@ def _synthetic_feature_frame(quantities: list[float]) -> pd.DataFrame:
 
 class TestHistoryUsesObservedReceipts:
     def test_history_chart_uses_observed_not_imputed(self):
-        quantities = [10.0] * 10 + [0.0] + [12.0] * 10
+        quantities = [10.0] * 10 + [0.0] * 50 + [12.0] * 10
         df = _synthetic_feature_frame(quantities)
         db = SessionLocal()
         try:
@@ -77,14 +77,14 @@ class TestDegenerateImputationGuard:
             assert_no_degenerate_stockout_imputation(df)
 
     def test_assertion_allows_varying_stockout_imputations(self):
-        quantities = [10.0] * 10 + [0.0] + [12.0] * 10
+        quantities = [10.0] * 10 + [0.0] * 50 + [12.0] * 10
         df = _synthetic_feature_frame(quantities).reset_index()
         df = detect_stockout_windows(df, "PHASE0-IMPUTE", db_session=None)
         corrected = apply_tobit_correction(df)
         assert_no_degenerate_stockout_imputation(corrected)
 
     def test_tobit_imputation_not_byte_identical_across_dates(self):
-        quantities = [10.0, 12.0, 11.0, 9.0, 13.0] + [0.0] * 5 + [15.0] * 5
+        quantities = [10.0, 12.0, 11.0, 9.0, 13.0] + [0.0] * 50 + [15.0] * 5
         df = _synthetic_feature_frame(quantities).reset_index()
         df = detect_stockout_windows(df, "PHASE0-TOBIT", db_session=None)
         corrected = apply_tobit_correction(df)
@@ -98,15 +98,15 @@ class TestStackingSoftWeights:
         actuals = np.full(100, 20.0)
         sarima = actuals + 1.0
         lgbm = actuals + 50.0
-        tft = actuals + 2.0
+        classical = actuals + 2.0
 
         stacker = StackingMetaLearner()
-        stacker.fit(sarima, lgbm, tft, actuals)
-        _, weights = stacker.predict(sarima[:5], lgbm[:5], tft[:5])
+        stacker.fit(sarima, lgbm, classical, actuals)
+        _, weights = stacker.predict(sarima[:5], lgbm[:5], classical[:5])
 
         assert weights.lgbm > 0.0
         assert weights.lgbm >= 0.05 - 1e-6
-        assert weights.sarima + weights.lgbm + weights.tft == pytest.approx(1.0, abs=1e-6)
+        assert weights.sarima + weights.lgbm + weights.classical == pytest.approx(1.0, abs=1e-6)
 
 
 class TestForecastIntervalSanity:
@@ -115,7 +115,7 @@ class TestForecastIntervalSanity:
             drug_code="PHASE0",
             center_syn_id=None,
             horizon_days=len(forecast),
-            model_weights=ModelWeightBreakdown(sarima=0.5, lgbm=0.5, tft=0.0),
+            model_weights=ModelWeightBreakdown(sarima=0.5, lgbm=0.5, classical=0.0),
             forecast=forecast,
             uncertainty_note="test",
         )

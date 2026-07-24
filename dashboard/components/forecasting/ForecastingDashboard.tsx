@@ -5,7 +5,6 @@ import { Activity, LineChart } from "lucide-react";
 
 import { ForecastRequestForm } from "@/components/forecasting/ForecastRequestForm";
 import { HoldoutValidationPanel } from "@/components/forecasting/HoldoutValidationPanel";
-import { ModelHealthMonitoringPanel } from "@/components/forecasting/ModelHealthMonitoringPanel";
 import { ForecastingErrorPanel } from "@/components/forecasting/ForecastingErrorPanel";
 import { ForecastingResultsTabs } from "@/components/forecasting/ForecastingResultsTabs";
 import { ForecastingTrainingControls } from "@/components/forecasting/ForecastingTrainingControls";
@@ -64,7 +63,7 @@ export function ForecastingDashboard() {
                 Ensemble Forecasting
               </h1>
               <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-500">
-                Train SARIMA, LightGBM, and TFT models — then generate calibrated quantile forecasts
+                Train SARIMA, LightGBM, and Classical models — then generate calibrated quantile forecasts
                 with conformal uncertainty bands and ensemble stacking.
               </p>
             </div>
@@ -85,19 +84,31 @@ export function ForecastingDashboard() {
 
         <HoldoutValidationPanel />
 
-        <ModelHealthMonitoringPanel />
-
         {error && !isLoading && <ForecastingErrorPanel error={error} />}
 
         {data && !isLoading && (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatChip label="Drug" value={data.drug_code} accent="slate" />
             <StatChip
-              label="Validation sMAPE"
+              label={
+                data.smape_validation_unreliable ||
+                data.demand_segment === "intermittent" ||
+                data.demand_segment === "lumpy"
+                  ? "Validation MASE skill"
+                  : "Validation sMAPE"
+              }
               value={
-                data.smape_last_validation != null
-                  ? `${data.smape_last_validation.toFixed(1)}%`
-                  : "—"
+                data.smape_validation_unreliable ||
+                data.demand_segment === "intermittent" ||
+                data.demand_segment === "lumpy"
+                  ? data.mase_skill_validation_full_window != null
+                    ? `${data.mase_skill_validation_full_window.toFixed(1)}%`
+                    : data.mase_validation_full_window != null
+                      ? `${Math.max(0, (1 - data.mase_validation_full_window) * 100).toFixed(1)}%`
+                      : "—"
+                  : data.smape_last_validation != null
+                    ? `${data.smape_last_validation.toFixed(1)}%`
+                    : "—"
               }
               accent="amber"
             />
@@ -112,6 +123,18 @@ export function ForecastingDashboard() {
               accent="green"
             />
           </div>
+        )}
+
+        {data?.validation_metrics_note && !isLoading && (
+          <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-relaxed text-slate-600">
+            {data.validation_metrics_note}
+            {data.smape_validation_unreliable && data.smape_last_validation != null && (
+              <>
+                {" "}
+                Reference sMAPE: {data.smape_last_validation.toFixed(1)}%.
+              </>
+            )}
+          </p>
         )}
 
         <div className="grid gap-6 xl:grid-cols-[1fr_340px]">

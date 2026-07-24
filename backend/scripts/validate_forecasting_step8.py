@@ -190,7 +190,7 @@ def run_validation(*, fast: bool) -> int:
         check("corrected frame has no NaN", corrected_df.isnull().sum().sum() == 0)
 
         print("\nStep 8.4 — Train forecasting models")
-        train_models = ["sarima", "lgbm"] if fast else ["sarima", "lgbm", "tft"]
+        train_models = ["sarima", "lgbm"] if fast else ["sarima", "lgbm", "classical"]
         resp = client.post(
             "/forecasting/train",
             json={
@@ -219,7 +219,7 @@ def run_validation(*, fast: bool) -> int:
                 "drug_code": PRIMARY_DRUG,
                 "horizon_days": 7,
                 "include_shap": True,
-                "include_attention": "tft" in train_models,
+                "include_attention": False,
             },
         )
         elapsed_ms = (time.perf_counter() - start) * 1000
@@ -281,7 +281,7 @@ def run_validation(*, fast: bool) -> int:
             check("sarima evaluated", "sarima" in model_names)
             check("lgbm evaluated", "lgbm" in model_names)
             if not fast:
-                check("tft evaluated", "tft" in model_names)
+                check("classical evaluated", "classical" in model_names)
 
         print("\nStep 8 extra — reload artifacts via fresh client")
         fresh = TestClient(app)

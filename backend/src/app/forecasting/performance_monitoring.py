@@ -29,7 +29,7 @@ def _latest_weight_snapshot(
     return (
         float(row.model_weight_sarima),
         float(row.model_weight_lgbm),
-        float(row.model_weight_tft),
+        float(row.model_weight_classical),
         row.generated_at,
     )
 
@@ -96,14 +96,24 @@ def get_performance_monitoring(
                 drug_code=row.drug_code,
                 model_name=row.model_name,
                 smape=float(row.smape),
+                smape_normal_supply=(
+                    float(row.smape_normal_supply)
+                    if row.smape_normal_supply is not None
+                    else None
+                ),
                 mase=float(row.mase) if row.mase is not None else None,
+                mase_normal_supply=(
+                    float(row.mase_normal_supply)
+                    if row.mase_normal_supply is not None
+                    else None
+                ),
                 coverage_90=float(row.coverage_90),
                 demand_segment=row.demand_segment,
                 data_quality_status=row.data_quality_status,
                 training_run_id=row.training_run_id,
                 weight_sarima=weights[0] if weights else None,
                 weight_lgbm=weights[1] if weights else None,
-                weight_tft=weights[2] if weights else None,
+                weight_classical=weights[2] if weights else None,
                 weights_as_of=weights[3] if weights else None,
                 smape_drift_pct=drift.smape_delta_pct,
                 mase_drift_pct=drift.mase_delta_pct,

@@ -82,14 +82,14 @@ export function coldStartRemainingPercent(observationCount: number): number {
 
 export const MAX_FORECAST_HORIZON = 30;
 
-export const FORECAST_MODELS = ["sarima", "lgbm", "tft"] as const;
+export const FORECAST_MODELS = ["sarima", "lgbm", "classical"] as const;
 
 export type ForecastModelId = (typeof FORECAST_MODELS)[number];
 
 export const FORECAST_MODEL_LABELS: Record<ForecastModelId, string> = {
   sarima: "SARIMA",
   lgbm: "LightGBM",
-  tft: "TFT",
+  classical: "Classical",
 };
 
 export const EXAMPLE_FORECAST_DRUGS = [

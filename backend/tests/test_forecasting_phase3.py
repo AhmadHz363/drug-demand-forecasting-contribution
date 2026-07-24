@@ -138,7 +138,7 @@ class TestForecastRegressionGuards:
             drug_code="E2E-TEST",
             center_syn_id=None,
             horizon_days=7,
-            model_weights=ModelWeightBreakdown(sarima=0.4, lgbm=0.4, tft=0.2),
+            model_weights=ModelWeightBreakdown(sarima=0.4, lgbm=0.4, classical=0.2),
             forecast=points,
             uncertainty_note="test",
             inference_health=InferenceHealth(
@@ -158,7 +158,7 @@ class TestForecastRegressionGuards:
         total = (
             response.model_weights.sarima
             + response.model_weights.lgbm
-            + response.model_weights.tft
+            + response.model_weights.classical
         )
         assert total == pytest.approx(1.0)
 

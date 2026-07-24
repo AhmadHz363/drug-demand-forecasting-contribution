@@ -6,18 +6,9 @@ import numpy as np
 import pandas as pd
 
 from app.forecasting.constants import LAG_DAYS, ROLLING_WINDOWS
-from app.forecasting.feature_engineering.external_features import (
-    DEFAULT_BED_OCCUPANCY,
-    DEFAULT_WEEKLY_SURGERY_COUNT,
-    external_feature_columns,
-)
+from app.forecasting.feature_engineering.external_features import external_feature_columns
 from app.forecasting.feature_engineering.rolling_features import _rolling_slope
-from app.forecasting.feature_engineering.supplier_features import (
-    DEFAULT_AVG_LEAD_TIME,
-    DEFAULT_LEAD_TIME_STD,
-    DEFAULT_RELIABILITY,
-    supplier_feature_columns,
-)
+from app.forecasting.feature_engineering.supplier_features import supplier_feature_columns
 from app.forecasting.feature_engineering.temporal_features import add_temporal_features
 
 
@@ -123,24 +114,17 @@ def build_recursive_feature_row(
 
     for col in external_feature_columns():
         if covariate_row is not None and col in covariate_row.index:
-            features[col] = float(covariate_row[col])
+            val = covariate_row[col]
+            features[col] = float(val) if val == val else float("nan")
         else:
-            features[col] = (
-                DEFAULT_BED_OCCUPANCY
-                if col == "bed_occupancy_rate"
-                else float(DEFAULT_WEEKLY_SURGERY_COUNT)
-            )
+            features[col] = float("nan")
 
-    supplier_defaults = {
-        "supplier_avg_lead_time": DEFAULT_AVG_LEAD_TIME,
-        "supplier_lead_time_std": DEFAULT_LEAD_TIME_STD,
-        "supplier_reliability_score": DEFAULT_RELIABILITY,
-    }
     for col in supplier_feature_columns():
         if covariate_row is not None and col in covariate_row.index:
-            features[col] = float(covariate_row[col])
+            val = covariate_row[col]
+            features[col] = float(val) if val == val else float("nan")
         else:
-            features[col] = supplier_defaults[col]
+            features[col] = float("nan")
 
     # Flag columns added by add_external_features / add_supplier_features during
     # training — they must be present at prediction time so the feature matrix

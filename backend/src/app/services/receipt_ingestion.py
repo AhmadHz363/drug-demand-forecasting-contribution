@@ -16,6 +16,7 @@ from app.schemas.receipt_upload import ReceiptRowError
 from app.services.demand_aggregation import sync_daily_demand_from_receipts
 from app.services.category_registry import attach_category_ids, upsert_categories_from_receipt_rows
 from app.services.drug_registry import attach_drug_ids, upsert_drugs_from_receipt_rows
+from app.services.import_coverage import content_hash_bytes, record_import_coverage
 from app.services.column_mapping import (
     DATE_FIELDS,
     EXCEL_TO_DB_COLUMNS,
@@ -28,7 +29,7 @@ from app.services.column_mapping import (
 logger = logging.getLogger(__name__)
 
 _REQUIRED_ROW_FIELDS = frozenset({"receipt_id", "drug_code", "receipt_date"})
-_RECEIPT_INSERT_BATCH_SIZE = 2000
+_RECEIPT_INSERT_BATCH_SIZE = 500
 
 
 class IngestionOutcome:
@@ -168,6 +169,7 @@ def _coerce_float(raw: Any, field: str) -> tuple[Optional[float], Optional[str]]
 
 
 def _coerce_date(raw: Any, field: str) -> tuple[Optional[date], Optional[str]]:
+    """Parse hospital ledger dates (DD/MM/YY with irregular whitespace)."""
     v = _empty_to_none(raw)
     if v is None:
         return None, None
@@ -178,7 +180,17 @@ def _coerce_date(raw: Any, field: str) -> tuple[Optional[date], Optional[str]]:
     if isinstance(v, str):
         v = re.sub(r"\s+", "", v.strip())
     try:
-        ts = pd.to_datetime(v, errors="coerce")
+        ts = pd.NaT
+        if isinstance(v, str):
+            for fmt in ("%d/%m/%y", "%d/%m/%Y", "%Y-%m-%d"):
+                ts = pd.to_datetime(v, format=fmt, errors="coerce")
+                if not pd.isna(ts):
+                    break
+            if pd.isna(ts):
+                # Lebanese hospital exports are day-first; never use US month-first.
+                ts = pd.to_datetime(v, errors="coerce", dayfirst=True)
+        else:
+            ts = pd.to_datetime(v, errors="coerce", dayfirst=True)
         if pd.isna(ts):
             return None, f"{field}: invalid date"
         dt = ts.to_pydatetime()
@@ -237,22 +249,70 @@ def _build_row_dict(row: Mapping[str, Any]) -> tuple[Optional[dict[str, Any]], O
     return data, None
 
 
+def _dedupe_key(record: dict[str, Any]) -> tuple[Any, ...]:
+    """Identity for a receipt line — includes LINE so multi-line docs are kept."""
+    line = record.get("line_count")
+    mov = record.get("movement_number")
+    return (
+        str(record["receipt_id"]).strip(),
+        line if line is not None else "",
+        str(mov).strip() if mov is not None else "",
+        str(record["drug_code"]).strip(),
+        record["receipt_date"],
+    )
+
+
 def _dedupe_records(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
-    seen: set[tuple[str, str, date]] = set()
+    seen: set[tuple[Any, ...]] = set()
     unique: list[dict[str, Any]] = []
     duplicates = 0
     for r in records:
-        key = (
-            str(r["receipt_id"]).strip(),
-            str(r["drug_code"]).strip(),
-            r["receipt_date"],
-        )
+        key = _dedupe_key(r)
         if key in seen:
             duplicates += 1
             continue
         seen.add(key)
         unique.append(r)
     return unique, duplicates
+
+
+def _delete_existing_receipt_lines(db: Session, records: list[dict[str, Any]]) -> int:
+    """Remove prior rows matching upload identity so re-uploads are idempotent."""
+    if not records:
+        return 0
+    deleted = 0
+    # Chunk to avoid oversized IN clauses on large hospital exports.
+    chunk_size = 500
+    for offset in range(0, len(records), chunk_size):
+        chunk = records[offset : offset + chunk_size]
+        receipt_ids = sorted({str(r["receipt_id"]).strip() for r in chunk})
+        existing = (
+            db.query(DrugReceipt)
+            .filter(DrugReceipt.receipt_id.in_(receipt_ids))
+            .all()
+        )
+        if not existing:
+            continue
+        wanted = {_dedupe_key(r) for r in chunk}
+        to_delete = [
+            row
+            for row in existing
+            if (
+                str(row.receipt_id).strip(),
+                row.line_count if row.line_count is not None else "",
+                str(row.movement_number).strip() if row.movement_number is not None else "",
+                str(row.drug_code).strip(),
+                row.receipt_date,
+            )
+            in wanted
+        ]
+        for row in to_delete:
+            db.delete(row)
+            deleted += 1
+    if deleted:
+        db.flush()
+        logger.info("Removed %s existing receipt lines before re-insert (idempotent upload)", deleted)
+    return deleted
 
 
 _ACCEPTED_EXTENSIONS = (".xlsx", ".xls", ".csv")
@@ -335,33 +395,65 @@ def ingest_receipt_file(
     if synthetic_receipt_seq:
         logger.info("Assigned incremental receipt_id for rows missing Doc: %s rows", synthetic_receipt_seq)
     if duplicates_in_file:
-        logger.info("Removed duplicate rows (same receipt_id, drug_code, receipt_date): %s", duplicates_in_file)
+        logger.info(
+            "Removed duplicate rows (same receipt_id, line, movement, drug_code, receipt_date): %s",
+            duplicates_in_file,
+        )
 
     if not parsed_rows:
         logger.warning("No valid rows after cleaning; duplicates_removed=%s", duplicates_in_file)
         return IngestionOutcome(inserted_rows=0, failed_rows=len(errors), errors=errors)
 
     try:
+        replaced = _delete_existing_receipt_lines(db, parsed_rows)
         code_to_id = upsert_drugs_from_receipt_rows(db, parsed_rows)
         attach_drug_ids(parsed_rows, code_to_id)
         category_code_to_id = upsert_categories_from_receipt_rows(db, parsed_rows)
         attach_category_ids(parsed_rows, category_code_to_id)
+        # Commit registry first so large exports can recover mid-file.
+        db.commit()
+        inserted = 0
         for offset in range(0, len(parsed_rows), _RECEIPT_INSERT_BATCH_SIZE):
             batch = parsed_rows[offset : offset + _RECEIPT_INSERT_BATCH_SIZE]
             db.bulk_insert_mappings(DrugReceipt, batch)
-        db.commit()
+            db.commit()
+            inserted += len(batch)
+            if offset == 0 or (offset // _RECEIPT_INSERT_BATCH_SIZE) % 50 == 0:
+                logger.info(
+                    "Receipt insert progress filename=%s rows=%s/%s",
+                    filename,
+                    inserted,
+                    len(parsed_rows),
+                )
         affected_codes = sorted({row["drug_code"] for row in parsed_rows})
         sync_daily_demand_from_receipts(db, drug_codes=affected_codes)
+        receipt_dates = [row["receipt_date"] for row in parsed_rows]
+        centers = {
+            str(row["center_syn_id"]).strip()
+            for row in parsed_rows
+            if row.get("center_syn_id") is not None and str(row["center_syn_id"]).strip()
+        }
+        record_import_coverage(
+            db,
+            filename=filename,
+            content_hash=content_hash_bytes(file_bytes),
+            min_receipt_date=min(receipt_dates),
+            max_receipt_date=max(receipt_dates),
+            row_count=inserted,
+            center_scope=",".join(sorted(centers)) if centers else None,
+            notes=f"ingest replaced={replaced} failed_rows={len(errors)}",
+        )
         db.commit()
         logger.info(
-            "Inserted %s drug receipt rows; failed=%s; duplicates_skipped=%s; synced %d drug(s) to daily_drug_demand",
-            len(parsed_rows),
+            "Inserted %s drug receipt rows (replaced=%s); failed=%s; duplicates_skipped=%s; synced %d drug(s) to daily_drug_demand",
+            inserted,
+            replaced,
             len(errors),
             duplicates_in_file,
             len(affected_codes),
         )
         return IngestionOutcome(
-            inserted_rows=len(parsed_rows),
+            inserted_rows=inserted,
             failed_rows=len(errors),
             errors=errors,
         )

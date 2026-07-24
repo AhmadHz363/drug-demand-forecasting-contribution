@@ -15,7 +15,13 @@ METADATA_COLUMNS = {
     "em_corrected_quantity",
     "correction_method",
     "is_stockout",
+    "is_coverage_gap",
     "demand_date",
+    "demand_filled",
+    "external_features_is_default",
+    "supplier_features_is_default",
+    "has_census",
+    "has_supplier",
 }
 
 LGBM_CATEGORICAL_FEATURES = ["has_lag_gaps"]
@@ -25,21 +31,48 @@ def external_feature_columns() -> list[str]:
     return ["bed_occupancy_rate", "weekly_surgery_count"]
 
 
-def tft_known_reals() -> list[str]:
-    return temporal_feature_columns() + external_feature_columns()
+def _drop_all_nan_columns(df: pd.DataFrame, columns: list[str]) -> list[str]:
+    return [col for col in columns if col in df.columns and not df[col].isna().all()]
 
 
-def tft_unknown_reals() -> list[str]:
+def tft_known_reals(df: pd.DataFrame | None = None) -> list[str]:
+    cols = temporal_feature_columns() + external_feature_columns()
+    if df is None:
+        return cols
+    return _drop_all_nan_columns(df, cols)
+
+
+def tft_unknown_reals(df: pd.DataFrame | None = None) -> list[str]:
     lag_cols = [c for c in lag_feature_columns() if c != "has_lag_gaps"]
-    return lag_cols + rolling_feature_columns()
+    cols = lag_cols + rolling_feature_columns()
+    if df is None:
+        return cols
+    return _drop_all_nan_columns(df, cols)
 
 
-def tft_static_reals() -> list[str]:
-    return supplier_feature_columns()
+def tft_static_reals(df: pd.DataFrame | None = None) -> list[str]:
+    cols = supplier_feature_columns()
+    if df is None:
+        return cols
+    return _drop_all_nan_columns(df, cols)
 
 
 def lgbm_feature_columns(df: pd.DataFrame) -> list[str]:
-    return [col for col in df.columns if col not in METADATA_COLUMNS]
+    """Model features only — drop metadata and NaN-only default covariates."""
+    cols = [col for col in df.columns if col not in METADATA_COLUMNS]
+    usable: list[str] = []
+    for col in cols:
+        series = df[col]
+        if col in external_feature_columns() and "external_features_is_default" in df.columns:
+            if float(df["external_features_is_default"].astype(float).mean()) >= 0.999:
+                continue
+        if col in supplier_feature_columns() and "supplier_features_is_default" in df.columns:
+            if float(df["supplier_features_is_default"].astype(float).mean()) >= 0.999:
+                continue
+        if series.isna().all():
+            continue
+        usable.append(col)
+    return usable
 
 
 def ensure_demand_date_index(df: pd.DataFrame) -> pd.DataFrame:

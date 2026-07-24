@@ -1,0 +1,50 @@
+{
+  "captured_at": "2026-07-13T14:21:46.892652+00:00",
+  "holdouts": [
+    {
+      "drug_code": "P406816",
+      "segment": "smooth",
+      "mase": Infinity,
+      "smape": 18.416583694786027,
+      "coverage_90": 0.8571428571428571,
+      "models": [
+        "ensemble",
+        "sarima",
+        "lgbm",
+        "classical"
+      ]
+    },
+    {
+      "drug_code": "P000888",
+      "segment": "intermittent",
+      "mase": Infinity,
+      "smape": 59.61403503426383,
+      "coverage_90": 0.8571428571428571,
+      "models": [
+        "ensemble",
+        "sarima",
+        "lgbm",
+        "classical"
+      ]
+    },
+    {
+      "drug_code": "P100702",
+      "segment": "smooth",
+      "mase": Infinity,
+      "smape": 60.2767784171514,
+      "coverage_90": 0.8,
+      "models": [
+        "ensemble",
+        "sarima",
+        "lgbm",
+        "classical"
+      ]
+    }
+  ],
+  "training_run_id": "1c942477-0676-447d-b247-484ac7ec9293",
+  "models_trained": [
+    "classical",
+    "lgbm",
+    "sarima"
+  ]
+}

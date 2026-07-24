@@ -17,18 +17,9 @@ from sqlalchemy import func, inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import SessionLocal, engine
-from app.forecasting.feature_engineering.external_features import (
-    DEFAULT_BED_OCCUPANCY,
-    DEFAULT_WEEKLY_SURGERY_COUNT,
-)
 from app.forecasting.feature_engineering.lag_features import lag_feature_columns
 from app.forecasting.feature_engineering.pipeline import build_feature_matrix
 from app.forecasting.feature_engineering.rolling_features import rolling_feature_columns
-from app.forecasting.feature_engineering.supplier_features import (
-    DEFAULT_AVG_LEAD_TIME,
-    DEFAULT_RELIABILITY,
-    DEFAULT_LEAD_TIME_STD,
-)
 from app.forecasting.feature_engineering.temporal_features import temporal_feature_columns
 from app.models.drug_receipt import DrugReceipt
 from app.services.demand_aggregation import get_receipt_date_bounds
@@ -155,7 +146,7 @@ class TestBuildFeatureMatrixIntegration:
     def test_alembic_at_head(self):
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "20260506_0004"
+        assert version == "20260713_0010"
 
     def test_stub_tables_exist(self):
         tables = set(inspect(engine).get_table_names())
@@ -182,7 +173,7 @@ class TestBuildFeatureMatrixIntegration:
         assert "total_quantity" in df.columns
         assert df.index.name == "demand_date"
 
-    def test_empty_census_uses_defaults(
+    def test_empty_census_omits_default_values(
         self,
         drug_code: str,
         date_range: tuple[date, date],
@@ -195,11 +186,12 @@ class TestBuildFeatureMatrixIntegration:
                 df = build_feature_matrix(drug_code, None, db, start, end)
         finally:
             db.close()
-        assert (df["bed_occupancy_rate"] == DEFAULT_BED_OCCUPANCY).all()
-        assert (df["weekly_surgery_count"] == DEFAULT_WEEKLY_SURGERY_COUNT).all()
-        assert "hospital_census table is empty" in caplog.text
+        assert df["bed_occupancy_rate"].isna().all()
+        assert df["weekly_surgery_count"].isna().all()
+        assert (df["external_features_is_default"] == 1).all()
+        assert "hospital_census" in caplog.text
 
-    def test_empty_supplier_uses_defaults(
+    def test_empty_supplier_omits_default_values(
         self,
         drug_code: str,
         date_range: tuple[date, date],
@@ -212,9 +204,10 @@ class TestBuildFeatureMatrixIntegration:
                 df = build_feature_matrix(drug_code, None, db, start, end)
         finally:
             db.close()
-        assert (df["supplier_avg_lead_time"] == DEFAULT_AVG_LEAD_TIME).all()
-        assert (df["supplier_lead_time_std"] == DEFAULT_LEAD_TIME_STD).all()
-        assert (df["supplier_reliability_score"] == DEFAULT_RELIABILITY).all()
+        assert df["supplier_avg_lead_time"].isna().all()
+        assert df["supplier_lead_time_std"].isna().all()
+        assert df["supplier_reliability_score"].isna().all()
+        assert (df["supplier_features_is_default"] == 1).all()
         assert "supplier_lead_times" in caplog.text
 
     def test_lag_7d_spot_check(self, drug_code: str, date_range: tuple[date, date]):

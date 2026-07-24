@@ -10,7 +10,7 @@ import { EmptyState } from "@/components/cold-start/ui";
 const MODEL_COLORS: Record<ForecastModelId, string> = {
   sarima: "bg-violet-500",
   lgbm: "bg-blue-500",
-  tft: "bg-emerald-500",
+  classical: "bg-emerald-500",
 };
 
 interface ModelWeightsPanelProps {
@@ -24,7 +24,7 @@ export function ModelWeightsPanel({ weights, embedded = false }: ModelWeightsPan
       <EmptyState
         icon={<Layers className="h-6 w-6" />}
         title="No model weights"
-        description="Run a forecast to see how SARIMA, LightGBM, and TFT contribute to the ensemble."
+        description="Run a forecast to see how SARIMA, LightGBM, and Classical contribute to the ensemble."
       />
     );
   }

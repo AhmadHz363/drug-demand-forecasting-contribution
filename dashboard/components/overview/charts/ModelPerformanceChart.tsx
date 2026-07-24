@@ -32,7 +32,7 @@ export function ModelPerformanceChart({ data }: { data: ModelPerformanceSummary[
       <EmptyState
         icon={<span className="text-lg">📉</span>}
         title="No model metrics yet"
-        description="Train forecasting models to compare sMAPE and coverage across SARIMA, LGBM, and TFT."
+        description="Train forecasting models to compare sMAPE and coverage across SARIMA, LGBM, and Classical."
       />
     );
   }

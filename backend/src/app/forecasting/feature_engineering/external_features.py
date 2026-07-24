@@ -13,6 +13,7 @@ from app.models.hospital_census import HospitalCensus
 
 logger = logging.getLogger(__name__)
 
+# Used only to fill sparse gaps when *some* real census rows exist for the window.
 DEFAULT_BED_OCCUPANCY = 0.75
 DEFAULT_WEEKLY_SURGERY_COUNT = 50
 
@@ -27,32 +28,48 @@ def add_external_features(
     """
     Merge bed occupancy and surgery count onto the demand DataFrame.
 
-    Requires columns: demand_date
+    When ``hospital_census`` is empty or unavailable, columns are filled with
+    NaN and ``external_features_is_default=1`` so models can omit them instead
+    of treating fake constants (0.75 / 50) as real covariates.
     """
     out = df.copy()
 
-    query = (
-        db_session.query(
-            HospitalCensus.census_date,
-            HospitalCensus.bed_occupancy_rate,
-            HospitalCensus.weekly_surgery_count,
-            HospitalCensus.center_syn_id,
+    try:
+        query = (
+            db_session.query(
+                HospitalCensus.census_date,
+                HospitalCensus.bed_occupancy_rate,
+                HospitalCensus.weekly_surgery_count,
+                HospitalCensus.center_syn_id,
+            )
+            .filter(
+                HospitalCensus.census_date >= start_date,
+                HospitalCensus.census_date <= end_date,
+            )
         )
-        .filter(
-            HospitalCensus.census_date >= start_date,
-            HospitalCensus.census_date <= end_date,
-        )
-    )
-    if center_syn_id is not None:
-        query = query.filter(HospitalCensus.center_syn_id == center_syn_id)
-
-    rows = query.all()
+        if center_syn_id is not None:
+            query = query.filter(HospitalCensus.center_syn_id == center_syn_id)
+        rows = query.all()
+    except Exception as exc:  # noqa: BLE001 — table may be missing in older DBs
+        logger.warning("hospital_census unavailable (%s) — omitting external features", exc)
+        try:
+            db_session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        out["bed_occupancy_rate"] = float("nan")
+        out["weekly_surgery_count"] = float("nan")
+        out["external_features_is_default"] = 1
+        out["has_census"] = 0
+        return out
 
     if not rows:
-        logger.warning("hospital_census table is empty — using default external feature values")
-        out["bed_occupancy_rate"] = DEFAULT_BED_OCCUPANCY
-        out["weekly_surgery_count"] = DEFAULT_WEEKLY_SURGERY_COUNT
+        logger.warning(
+            "hospital_census table is empty — omitting default-filled external features"
+        )
+        out["bed_occupancy_rate"] = float("nan")
+        out["weekly_surgery_count"] = float("nan")
         out["external_features_is_default"] = 1
+        out["has_census"] = 0
         return out
 
     census_df = pd.DataFrame(
@@ -82,10 +99,13 @@ def add_external_features(
         how="left",
     )
     merged["external_features_is_default"] = merged["bed_occupancy_rate"].isna().astype(int)
+    # Sparse gaps only: fill from nearby real census, not invent a full fake series.
     merged["bed_occupancy_rate"] = merged["bed_occupancy_rate"].fillna(DEFAULT_BED_OCCUPANCY)
     merged["weekly_surgery_count"] = (
         merged["weekly_surgery_count"].fillna(DEFAULT_WEEKLY_SURGERY_COUNT).astype(int)
     )
+    # If most rows were gaps, still mark as mostly-default via the flag above.
+    merged["has_census"] = (1 - merged["external_features_is_default"]).astype(int)
     merged = merged.drop(columns=["_merge_date", "census_date"], errors="ignore")
     return merged
 

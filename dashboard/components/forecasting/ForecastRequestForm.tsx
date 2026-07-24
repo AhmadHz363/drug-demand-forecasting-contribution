@@ -205,8 +205,8 @@ export function ForecastRequestForm({ onSubmit, isLoading }: ForecastRequestForm
               onChange={setIncludeShap}
             />
             <ToggleCard
-              label="Include TFT attention"
-              description="Show temporal attention weights from the TFT model"
+              label="Include attention weights (deprecated)"
+              description="Legacy TFT attention is no longer available; this option is kept for API compatibility"
               checked={includeAttention}
               onChange={setIncludeAttention}
             />

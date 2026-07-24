@@ -35,7 +35,7 @@ __all__ = [
     "BaseForecastingModel",
     "SarimaModel",
     "LightGBMModel",
-    "TFTModel",
+    "ClassicalModel",
     "build_feature_matrix",
     "correct_demand",
     "walk_forward_smape",
@@ -50,8 +50,8 @@ def __getattr__(name: str):
         from app.forecasting.models.lgbm_model import LightGBMModel
 
         return LightGBMModel
-    if name == "TFTModel":
-        from app.forecasting.models.tft_model import TFTModel
+    if name == "ClassicalModel":
+        from app.forecasting.models.classical_model import ClassicalModel
 
-        return TFTModel
+        return ClassicalModel
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

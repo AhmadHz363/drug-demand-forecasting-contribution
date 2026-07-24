@@ -11,7 +11,7 @@ interface ForecastingWorkflowStepperProps {
 }
 
 const STEPS: { id: ForecastingWorkflowStep; label: string; hint: string }[] = [
-  { id: "setup", label: "Train models", hint: "SARIMA · LGBM · TFT" },
+  { id: "setup", label: "Train models", hint: "SARIMA · LGBM · Classical" },
   { id: "configure", label: "Select drug", hint: "Choose catalog drug" },
   { id: "results", label: "View forecast", hint: "Run prediction" },
 ];

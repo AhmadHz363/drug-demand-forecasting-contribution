@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 
 from app.forecasting.models.base_model import BaseForecastingModel
+from app.forecasting.models.classical_model import ClassicalModel
 from app.forecasting.models.lgbm_model import LightGBMModel
 from app.forecasting.models.sarima_model import SarimaModel
 from app.forecasting.models.tft_model import TFTModel
@@ -46,12 +47,13 @@ def artifacts_dir(tmp_path, monkeypatch) -> Iterator[str]:
     path = str(tmp_path / "artifacts")
     monkeypatch.setattr("app.forecasting.models.sarima_model.ARTIFACTS_DIR", path)
     monkeypatch.setattr("app.forecasting.models.lgbm_model.ARTIFACTS_DIR", path)
+    monkeypatch.setattr("app.forecasting.models.classical_model.ARTIFACTS_DIR", path)
     monkeypatch.setattr("app.forecasting.models.tft_model.ARTIFACTS_DIR", path)
     yield path
 
 
 class TestBaseForecastingModelContract:
-    @pytest.mark.parametrize("model_cls", [SarimaModel, LightGBMModel, TFTModel])
+    @pytest.mark.parametrize("model_cls", [SarimaModel, LightGBMModel, ClassicalModel])
     def test_cannot_instantiate_incomplete_subclass(self, model_cls):
         assert issubclass(model_cls, BaseForecastingModel)
 
@@ -108,10 +110,39 @@ class TestLightGBMModel:
         assert len(shap_data) >= 10
 
 
-class TestTFTModel:
+class TestClassicalModel:
+    def test_train_predict_save_load(self, artifacts_dir):
+        drug_code = "classical-drug"
+        df = _build_training_frame(120)
+        model = ClassicalModel()
+        assert model.is_trained(drug_code) is False
+
+        model.train(df, drug_code)
+        preds = model.predict(df, horizon_days=7)
+        assert len(preds) == 7
+        assert (preds["p10"] <= preds["p50"]).all()
+        assert (preds["p50"] <= preds["p90"]).all()
+
+        path = model.save(drug_code)
+        assert path.endswith(".pkl")
+        assert model.is_trained(drug_code) is True
+
+        reloaded = ClassicalModel()
+        reloaded.load(drug_code)
+        reloaded_preds = reloaded.predict(df, horizon_days=7)
+        pd.testing.assert_frame_equal(preds, reloaded_preds)
+
+    def test_rejects_insufficient_history(self):
+        df = _build_training_frame(59)
+        model = ClassicalModel()
+        with pytest.raises(ValueError, match="Classical requires at least 60 days"):
+            model.train(df, "short-classical")
+
+
+class TestTFTModelDeprecated:
     def test_skips_training_when_history_too_short(self, artifacts_dir, caplog):
         drug_code = "short-tft"
-        df = _build_training_frame(200)
+        df = _build_training_frame(100)
         model = TFTModel()
         with caplog.at_level(logging.WARNING):
             model.train(df, drug_code)

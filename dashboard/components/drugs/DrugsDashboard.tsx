@@ -1,14 +1,27 @@
 "use client";
 
-import { Pill, Search } from "lucide-react";
+import { BarChart3, Pill, Search } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { Panel, PanelBody, PanelHeader, inputClass } from "@/components/cold-start/ui";
 import { DrugDetailModal } from "@/components/drugs/DrugDetailModal";
+import { DrugUsageStatsModal } from "@/components/drugs/DrugUsageStatsModal";
 import { listDrugs } from "@/lib/api";
 import type { DrugItem, PaginatedDrugListResponse } from "@/lib/types";
 
 const PAGE_SIZE = 20;
+
+function formatDateRange(first?: string | null, last?: string | null): string {
+  if (!first && !last) return "—";
+  const fmt = (iso: string) =>
+    new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  if (first && last) return `${fmt(first)} → ${fmt(last)}`;
+  return fmt(first ?? last ?? "");
+}
 
 export function DrugsDashboard() {
   const [query, setQuery] = useState("");
@@ -18,6 +31,7 @@ export function DrugsDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedDrug, setSelectedDrug] = useState<DrugItem | null>(null);
+  const [usageDrug, setUsageDrug] = useState<DrugItem | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -64,7 +78,7 @@ export function DrugsDashboard() {
       <Panel>
         <PanelHeader
           title="Known drugs"
-          description="Search by code, name, or category. Click a row to view specs and demand history."
+          description="Search by code, name, or category. Open details for specs, or usage stats to inspect daily quantities and data gaps."
           action={
             data ? (
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
@@ -99,38 +113,28 @@ export function DrugsDashboard() {
                   <th className="px-4 py-3 text-left font-semibold text-slate-700">Code</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-700">Name</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-700">Category</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-700">Data days</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-700">Date range</th>
                   <th className="px-4 py-3 text-right font-semibold text-slate-700">Receipts</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-700">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
                       Loading drugs…
                     </td>
                   </tr>
                 ) : !data?.items.length ? (
                   <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
                       {debouncedQuery ? "No drugs match your search." : "No drugs ingested yet."}
                     </td>
                   </tr>
                 ) : (
                   data.items.map((drug: DrugItem) => (
-                    <tr
-                      key={drug.id}
-                      className="cursor-pointer hover:bg-blue-50/60"
-                      onClick={() => setSelectedDrug(drug)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          setSelectedDrug(drug);
-                        }
-                      }}
-                      tabIndex={0}
-                      role="button"
-                      aria-label={`View details for ${drug.drug_name ?? drug.drug_code}`}
-                    >
+                    <tr key={drug.id} className="hover:bg-slate-50/80">
                       <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-900">
                         {drug.drug_code}
                       </td>
@@ -141,7 +145,32 @@ export function DrugsDashboard() {
                         {drug.drug_category ?? "—"}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-slate-900">
+                        {drug.distinct_receipt_days.toLocaleString()}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-600">
+                        {formatDateRange(drug.first_receipt_date, drug.last_receipt_date)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-slate-900">
                         {drug.receipt_count.toLocaleString()}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDrug(drug)}
+                            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+                          >
+                            Details
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setUsageDrug(drug)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
+                          >
+                            <BarChart3 className="h-3.5 w-3.5" aria-hidden="true" />
+                            Usage
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -180,6 +209,10 @@ export function DrugsDashboard() {
 
       {selectedDrug && (
         <DrugDetailModal drug={selectedDrug} onClose={() => setSelectedDrug(null)} />
+      )}
+
+      {usageDrug && (
+        <DrugUsageStatsModal drug={usageDrug} onClose={() => setUsageDrug(null)} />
       )}
     </div>
   );

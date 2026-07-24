@@ -65,7 +65,7 @@ export function ModelHealthMonitoringPanel() {
     <Panel id="forecasting-health-panel">
       <PanelHeader
         title="Model health monitoring"
-        description="Walk-forward sMAPE/MASE, coverage, and drift vs prior training runs."
+        description="Walk-forward MASE (primary for intermittent demand) and sMAPE (supplementary)."
         action={
           <button
             type="button"
@@ -114,8 +114,8 @@ export function ModelHealthMonitoringPanel() {
                   <tr>
                     <th className="px-3 py-2 font-medium">Drug</th>
                     <th className="px-3 py-2 font-medium">Model</th>
-                    <th className="px-3 py-2 font-medium">sMAPE</th>
                     <th className="px-3 py-2 font-medium">MASE</th>
+                    <th className="px-3 py-2 font-medium">sMAPE</th>
                     <th className="px-3 py-2 font-medium">Coverage</th>
                     <th className="px-3 py-2 font-medium">Segment</th>
                     <th className="px-3 py-2 font-medium">Drift</th>
@@ -127,9 +127,15 @@ export function ModelHealthMonitoringPanel() {
                     <tr key={`${row.drug_code}-${row.model_name}-${row.evaluated_at}`}>
                       <td className="px-3 py-2 font-medium">{row.drug_code}</td>
                       <td className="px-3 py-2 uppercase">{row.model_name}</td>
-                      <td className="px-3 py-2">{formatPct(row.smape)}</td>
                       <td className="px-3 py-2">
                         {row.mase != null ? row.mase.toFixed(3) : "—"}
+                      </td>
+                      <td className="px-3 py-2">
+                        {formatPct(row.smape)}
+                        {(row.demand_segment === "intermittent" ||
+                          row.demand_segment === "lumpy") && (
+                          <span className="ml-1 text-[10px] text-slate-400">ref</span>
+                        )}
                       </td>
                       <td className="px-3 py-2">{formatPct(row.coverage_90 * 100)}</td>
                       <td className="px-3 py-2">{row.demand_segment ?? "—"}</td>

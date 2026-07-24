@@ -8,31 +8,46 @@ from __future__ import annotations
 import os
 
 # ── Feature Engineering ──────────────────────────────────────────────────────
-LAG_DAYS = [1, 7, 28, 365]
-ROLLING_WINDOWS = [28, 91, 182]
+# Extended to use full 2-year history (2023-2024) instead of 1 year
+LAG_DAYS = [1, 7, 28, 365, 730]  # Added 730-day (2-year) lag
+ROLLING_WINDOWS = [28, 91, 182, 365]  # Added 365-day rolling window
 MIN_HISTORY_DAYS_SARIMA = 60
-SARIMA_TRAIN_DAYS = 182
-SARIMA_TRAIN_DAYS_SHORT = 90
+SARIMA_TRAIN_DAYS = 730  # Increased from 182 to use full 2 years
+SARIMA_TRAIN_DAYS_SHORT = 365  # Increased from 90 to 1 year for intermittent
 MIN_HISTORY_DAYS_LGBM = 90
 PREDICTION_CAP_RECENT_DAYS = 91
+MIN_HISTORY_DAYS_CLASSICAL = 60
 MIN_HISTORY_DAYS_TFT = 365
 MIN_HISTORY_DAYS_TFT_SHORT = 180
 FORECAST_HORIZON = 30
 FORECAST_CHART_HISTORY_DAYS = 90
-LOOKBACK_WINDOW_TFT = 365
-LOOKBACK_WINDOW_TFT_SHORT = 180
-LGBM_LOOKBACK_WINDOW = 365
+LOOKBACK_WINDOW_TFT = 730  # Increased from 365 to 2 years
+LOOKBACK_WINDOW_TFT_SHORT = 365  # Increased from 180 to 1 year
+LGBM_LOOKBACK_WINDOW = 730  # Increased from 365 to use full 2 years
+
+# ── Classical (ETS / Theta / TSB / Croston-SBA) ───────────────────────────────
+CLASSICAL_SEASONAL_PERIOD = 7
+# Increased from 0.1 to allow faster adaptation for intermittent/lumpy demand
+CLASSICAL_CROSTON_ALPHA = 0.15
+CLASSICAL_TSB_ALPHA_P = 0.15
+CLASSICAL_TSB_ALPHA_D = 0.15
+CLASSICAL_SMOOTHING_BOUNDS = (1e-4, 0.99)
+LGBM_RECENCY_HALFLIFE_DAYS = 365
 
 # ── Censored Demand ───────────────────────────────────────────────────────────
 STOCKOUT_RATE_THRESHOLD = 0.20
 MIN_STOCKOUT_PERIODS = 3
+# Supply-side outage: consecutive near-zero days (not isolated quiet days).
+STOCKOUT_MIN_RUN_DAYS = 45
+STOCKOUT_NEAR_ZERO_THRESHOLD = 2.0
 
 # ── SARIMA ────────────────────────────────────────────────────────────────────
 SARIMA_ORDER = (1, 1, 1)
 SARIMA_SEASONAL_ORDER = (1, 1, 1, 7)
 SARIMA_MAX_ITER = 200
 SARIMA_RECENT_LEVEL_DAYS = 28
-SARIMA_FORECAST_SHRINKAGE = 0.4
+# Reduced shrinkage to allow SARIMA to be more responsive, especially for smooth series
+SARIMA_FORECAST_SHRINKAGE = 0.28
 
 # ── LightGBM ─────────────────────────────────────────────────────────────────
 LGBM_QUANTILES = [0.10, 0.50, 0.90]
@@ -66,21 +81,36 @@ TFT_MAX_TRAIN_DAYS = LOOKBACK_WINDOW_TFT + FORECAST_HORIZON + 14
 # ── Demand segmentation (Syntetos–Boylan) ─────────────────────────────────────
 ADI_THRESHOLD = 1.32
 CV2_THRESHOLD = 0.49
+SEGMENTATION_LOW_DEMAND_RATIO = 0.05
+SEGMENTATION_MIN_DORMANT_RUN_DAYS = 14
+SEGMENTATION_WEEKLY_DIP_CV2 = 0.20
 DEMAND_SEGMENTS = ("smooth", "intermittent", "erratic", "lumpy")
 GLOBAL_DEMAND_SEGMENT = "global"
 SEGMENT_ENSEMBLE_MIN_SAMPLES = 20
+MIN_DRUGS_FOR_CONFORMAL = 10
 
 # ── Walk-forward validation ───────────────────────────────────────────────────
 WALK_FORWARD_N_SPLITS = 5
 WALK_FORWARD_TEST_HORIZON = 7
 SEASONAL_NAIVE_PERIOD = 7
+ROLLING_VALIDATION_WINDOWS = (7, 30)
+# sMAPE spikes toward 200% on zero-actual days; flag above this zero share in validation.
+SMAPE_UNRELIABLE_ZERO_FRACTION = 0.50
+# Cap stacked-ensemble upward drift on intermittent/lumpy segments (see round 5 Task L).
+STACKING_HORIZON_DRIFT_START_STEP = 7
+STACKING_MAX_HORIZON_GROWTH_INTERMITTENT = 0.15
 
 # ── Ensemble ──────────────────────────────────────────────────────────────────
 ENSEMBLE_ALPHA = 1.0
 ENSEMBLE_MAE_WEIGHT_POWER = 1.0
 ENSEMBLE_MIN_MODEL_WEIGHT = 0.05
 STACKING_DISAGREEMENT_CAP_RATIO = 0.5
+CHAMPION_AGREEMENT_REL_TOL = 0.10
+CHAMPION_AGREEMENT_MASE_TOLERANCE = 0.05
 CONFORMAL_COVERAGE = 0.90
+# Per-horizon scale factors must not collapse far below the global calibration scale.
+CONFORMAL_MIN_STEP_SCALE_RATIO = 0.5
+CONFORMAL_MIN_STEP_RESIDUAL_SAMPLES = 3
 
 # ── Forecast sanity checks ────────────────────────────────────────────────────
 INTERVAL_WIDTH_SHRINK_TOLERANCE = 0.5

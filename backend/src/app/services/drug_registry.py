@@ -97,9 +97,26 @@ def search_drugs(
     *,
     page: int = 1,
     page_size: int = 20,
-) -> tuple[list[Drug], int]:
-    """Paginated search over the unique drugs table."""
-    base = db_session.query(Drug)
+) -> tuple[list[dict], int]:
+    """Paginated search over the unique drugs table with receipt-day coverage."""
+    receipt_stats = (
+        db_session.query(
+            DrugReceipt.drug_code.label("drug_code"),
+            func.count(func.distinct(DrugReceipt.receipt_date)).label("distinct_receipt_days"),
+            func.min(DrugReceipt.receipt_date).label("first_receipt_date"),
+            func.max(DrugReceipt.receipt_date).label("last_receipt_date"),
+        )
+        .group_by(DrugReceipt.drug_code)
+        .subquery()
+    )
+
+    base = db_session.query(
+        Drug,
+        func.coalesce(receipt_stats.c.distinct_receipt_days, 0).label("distinct_receipt_days"),
+        receipt_stats.c.first_receipt_date,
+        receipt_stats.c.last_receipt_date,
+    ).outerjoin(receipt_stats, Drug.drug_code == receipt_stats.c.drug_code)
+
     normalized = (query or "").strip()
     if normalized:
         pattern = f"%{normalized}%"
@@ -118,7 +135,16 @@ def search_drugs(
         .limit(page_size)
         .all()
     )
-    return rows, total
+    items = [
+        {
+            "drug": drug,
+            "distinct_receipt_days": int(distinct_receipt_days or 0),
+            "first_receipt_date": first_receipt_date,
+            "last_receipt_date": last_receipt_date,
+        }
+        for drug, distinct_receipt_days, first_receipt_date, last_receipt_date in rows
+    ]
+    return items, total
 
 
 def get_drug_by_code(db_session: Session, drug_code: str) -> Drug | None:

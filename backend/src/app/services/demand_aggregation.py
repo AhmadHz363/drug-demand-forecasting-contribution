@@ -2,6 +2,9 @@
 
 Source of truth for training/inference demand history is ``drug_receipts``.
 ``daily_drug_demand`` is a materialized aggregate refreshed from receipts.
+
+Daily totals are **net inpatient consumption** (sales − returns − cancel sales).
+Inter-department transfers and other ledger movements are excluded.
 """
 
 from __future__ import annotations
@@ -10,13 +13,44 @@ import logging
 from datetime import date, timedelta
 from typing import Optional
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, cast, Float, func, or_
 from sqlalchemy.orm import Session
 
 from app.models.daily_drug_demand import DailyDrugDemand
 from app.models.drug_receipt import DrugReceipt
+from app.services.import_coverage import (
+    ensure_default_coverage_from_receipt_bounds,
+    get_merged_coverage_periods,
+    is_date_covered,
+    latest_coverage_segment,
+)
+from app.services.movement_demand import (
+    PATIENT_RETURN_OR_CANCEL_MOVEMENTS,
+    PATIENT_SALE_MOVEMENTS,
+    clip_daily_demand,
+    patient_demand_contribution,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _movement_number_as_int_expr():
+    """Cast varchar MOV# values like ``5.0`` / ``5`` to integers for filtering."""
+    return cast(func.nullif(func.trim(DrugReceipt.movement_number), ""), Float)
+
+
+def _patient_contribution_expr():
+    """SQL expression: role-based signed contribution matching ``patient_demand_contribution``."""
+    mov = _movement_number_as_int_expr()
+    qty = func.coalesce(DrugReceipt.quantity, 0.0)
+    abs_qty = func.abs(qty)
+    return case(
+        (mov.in_(sorted(PATIENT_SALE_MOVEMENTS)), abs_qty),
+        (mov.in_(sorted(PATIENT_RETURN_OR_CANCEL_MOVEMENTS)), -abs_qty),
+        (DrugReceipt.movement_number.is_(None), qty),  # legacy rows without MOV#
+        (func.trim(DrugReceipt.movement_number) == "", qty),
+        else_=0.0,
+    )
 
 
 def _aggregate_query(
@@ -27,10 +61,11 @@ def _aggregate_query(
     end_date: Optional[date] = None,
     center_syn_id: Optional[str] = None,
 ):
+    contrib = _patient_contribution_expr()
     query = db_session.query(
         DrugReceipt.drug_code,
         DrugReceipt.receipt_date.label("demand_date"),
-        func.coalesce(func.sum(DrugReceipt.quantity), 0.0).label("total_quantity"),
+        func.coalesce(func.sum(contrib), 0.0).label("total_quantity"),
     )
     if drug_codes:
         query = query.filter(DrugReceipt.drug_code.in_(drug_codes))
@@ -50,7 +85,7 @@ def aggregate_daily_demand_rows(
     end_date: date,
     center_syn_id: Optional[str] = None,
 ) -> list[tuple[date, float]]:
-    """Return daily totals for one drug directly from ``drug_receipts``."""
+    """Return daily inpatient demand totals for one drug from ``drug_receipts``."""
     rows = (
         _aggregate_query(
             db_session,
@@ -62,7 +97,10 @@ def aggregate_daily_demand_rows(
         .order_by(DrugReceipt.receipt_date.asc())
         .all()
     )
-    return [(row.demand_date, float(row.total_quantity)) for row in rows]
+    return [
+        (row.demand_date, clip_daily_demand(float(row.total_quantity)))
+        for row in rows
+    ]
 
 
 def get_receipt_date_bounds(
@@ -79,6 +117,72 @@ def get_receipt_date_bounds(
         query = query.filter(DrugReceipt.center_syn_id == center_syn_id)
     start_date, end_date = query.one()
     return start_date, end_date
+
+
+def get_global_receipt_date_bounds(
+    db_session: Session,
+) -> tuple[Optional[date], Optional[date], int]:
+    """Hospital-wide receipt min/max dates and row count."""
+    min_date, max_date, row_count = db_session.query(
+        func.min(DrugReceipt.receipt_date),
+        func.max(DrugReceipt.receipt_date),
+        func.count(DrugReceipt.id),
+    ).one()
+    return min_date, max_date, int(row_count or 0)
+
+
+def get_import_coverage_periods(db_session: Session) -> list[tuple[date, date]]:
+    """Hospital/file coverage intervals (not per-drug sparse activity)."""
+    min_date, max_date, row_count = get_global_receipt_date_bounds(db_session)
+    ensure_default_coverage_from_receipt_bounds(
+        db_session,
+        min_date=min_date,
+        max_date=max_date,
+        row_count=row_count,
+    )
+    return get_merged_coverage_periods(db_session)
+
+
+def get_latest_coverage_segment(db_session: Session) -> Optional[tuple[date, date]]:
+    periods = get_import_coverage_periods(db_session)
+    if not periods:
+        return latest_coverage_segment(db_session)
+    return periods[-1]
+
+
+def resolve_covered_history_range(
+    db_session: Session,
+    drug_code: str,
+    center_syn_id: Optional[str] = None,
+    *,
+    prefer_latest_segment: bool = False,
+) -> tuple[Optional[date], Optional[date]]:
+    """
+    Resolve the feature-engineering date range for a drug.
+
+    When ``prefer_latest_segment`` is True (SARIMA/classical), clip to the
+    latest contiguous hospital coverage segment intersected with the drug's
+    receipt bounds. Otherwise return the full drug receipt span (LightGBM may
+    use all covered segments with gap resets).
+    """
+    drug_start, drug_end = get_receipt_date_bounds(db_session, drug_code, center_syn_id)
+    if drug_start is None or drug_end is None:
+        return None, None
+    if not prefer_latest_segment:
+        return drug_start, drug_end
+    segment = get_latest_coverage_segment(db_session)
+    if segment is None:
+        return drug_start, drug_end
+    seg_start, seg_end = segment
+    start = max(drug_start, seg_start)
+    end = min(drug_end, seg_end)
+    if end < start:
+        return drug_start, drug_end
+    return start, end
+
+
+def date_is_covered(db_session: Session, day: date) -> bool:
+    return is_date_covered(day, get_import_coverage_periods(db_session))
 
 
 def count_distinct_receipt_days(
@@ -211,6 +315,20 @@ def load_recent_quantities_from_receipts(
     return quantities[:lookback_days]
 
 
+def aggregate_receipt_rows_in_memory(
+    rows: list[dict],
+) -> dict[tuple[str, date], float]:
+    """Aggregate receipt dicts to ``(drug_code, date) → clipped patient demand``."""
+    totals: dict[tuple[str, date], float] = {}
+    for row in rows:
+        code = str(row["drug_code"]).strip()
+        demand_date = row["receipt_date"]
+        contrib = patient_demand_contribution(row.get("movement_number"), row.get("quantity"))
+        key = (code, demand_date)
+        totals[key] = totals.get(key, 0.0) + contrib
+    return {key: clip_daily_demand(value) for key, value in totals.items()}
+
+
 def sync_daily_demand_from_receipts(
     db_session: Session,
     *,
@@ -250,7 +368,7 @@ def sync_daily_demand_from_receipts(
         {
             "drug_code": row.drug_code,
             "demand_date": row.demand_date,
-            "total_quantity": float(row.total_quantity),
+            "total_quantity": clip_daily_demand(float(row.total_quantity)),
         }
         for row in aggregates
     ]

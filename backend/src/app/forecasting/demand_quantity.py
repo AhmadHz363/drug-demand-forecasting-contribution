@@ -1,7 +1,8 @@
-"""Normalize net receipt quantities to consumption demand.
+"""Normalize receipt aggregates to non-negative consumption demand.
 
-Negative daily totals often reflect inter-department transfers.  Those
-movements still consume stock and should be modeled as positive demand.
+Primary inpatient demand is produced by movement-aware aggregation
+(``patient_demand_contribution`` → already non-negative). This module remains
+a safety net for legacy signed nets (e.g. seed data without MOV#).
 """
 
 from __future__ import annotations

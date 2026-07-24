@@ -121,7 +121,7 @@ export function ForecastingTrainingControls({
             const icons = {
               sarima: TrendingUp,
               lgbm: BarChart3,
-              tft: Brain,
+              classical: Brain,
             };
             const Icon = icons[model];
 
@@ -152,7 +152,7 @@ export function ForecastingTrainingControls({
                 <span className="mt-0.5 text-xs text-slate-500">
                   {model === "sarima" && "Seasonal ARIMA baseline"}
                   {model === "lgbm" && "Gradient boosting with lags"}
-                  {model === "tft" && "Temporal fusion transformer"}
+                  {model === "classical" && "ETS / Croston classical baseline"}
                 </span>
               </button>
             );
