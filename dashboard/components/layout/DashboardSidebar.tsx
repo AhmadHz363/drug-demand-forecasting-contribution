@@ -25,7 +25,7 @@ const NAV_ITEMS = [
   {
     href: "/data-ingestion",
     label: "Data Ingestion",
-    description: "Upload receipt spreadsheets",
+    description: "Upload hospital Excel exports",
     icon: Upload,
   },
   {
@@ -49,7 +49,7 @@ const NAV_ITEMS = [
   {
     href: "/forecasting",
     label: "Forecasting",
-    description: "Ensemble demand models",
+    description: "SHIELD-XR weekly demand",
     icon: LineChart,
   },
 ] as const;

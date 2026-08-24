@@ -23,11 +23,9 @@ if str(_SRC) not in sys.path:
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
-from app.models.daily_drug_demand import DailyDrugDemand
 from app.models.drug import Drug
 from app.models.drug_catalog import DrugCatalog
 from app.models.drug_receipt import DrugReceipt
-from app.services.demand_aggregation import sync_daily_demand_from_receipts
 from app.services.drug_registry import insert_receipt_rows
 
 E2E_PREFIX = "E2E-"
@@ -198,9 +196,6 @@ def generate_demand_series(
 def clear_e2e_data(db: Session) -> None:
     """Remove integration-test rows (catalog, receipts, demand for E2E drugs and NEW-001)."""
     codes = e2e_drug_codes() + [NEW_DRUG_CODE]
-    db.query(DailyDrugDemand).filter(DailyDrugDemand.drug_code.in_(codes)).delete(
-        synchronize_session=False
-    )
     db.query(DrugReceipt).filter(DrugReceipt.drug_code.in_(codes)).delete(
         synchronize_session=False
     )
@@ -231,9 +226,6 @@ def seed_demand(db: Session, *, days: int = DEMAND_DAYS) -> int:
     db.query(DrugReceipt).filter(DrugReceipt.drug_code.in_(codes)).delete(
         synchronize_session=False
     )
-    db.query(DailyDrugDemand).filter(DailyDrugDemand.drug_code.in_(codes)).delete(
-        synchronize_session=False
-    )
 
     receipt_rows: list[dict] = []
     bases = [45, 120, 80, 25, 35, 60, 40, 30]
@@ -257,16 +249,11 @@ def seed_demand(db: Session, *, days: int = DEMAND_DAYS) -> int:
 
     insert_receipt_rows(db, receipt_rows)
     db.commit()
-    synced = sync_daily_demand_from_receipts(db, drug_codes=codes)
-    db.commit()
-    return synced
+    return len(receipt_rows)
 
 
 def insert_new_drug_observations(db: Session, count: int) -> None:
     """Insert `count` daily receipt rows for NEW-001 (most recent calendar days)."""
-    db.query(DailyDrugDemand).filter(DailyDrugDemand.drug_code == NEW_DRUG_CODE).delete(
-        synchronize_session=False
-    )
     db.query(DrugReceipt).filter(DrugReceipt.drug_code == NEW_DRUG_CODE).delete(
         synchronize_session=False
     )
@@ -282,8 +269,6 @@ def insert_new_drug_observations(db: Session, count: int) -> None:
         for offset in range(count)
     ]
     insert_receipt_rows(db, receipt_rows)
-    db.commit()
-    sync_daily_demand_from_receipts(db, drug_codes=[NEW_DRUG_CODE])
     db.commit()
 
 

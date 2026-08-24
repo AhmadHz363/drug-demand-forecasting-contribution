@@ -65,6 +65,16 @@ MODEL_REGISTRY: dict[str, type[BaseForecastingModel]] = {
     "classical": ClassicalModel,
 }
 
+# SHIELD-XR replaces the per-drug ensemble; legacy model names still accepted for API compat.
+SHIELD_XR_MODEL_ALIASES = {
+    "shield_xr",
+    "plain_tweedie",
+    "plain_l1",
+    "sarima",
+    "lgbm",
+    "classical",
+}
+
 
 class ForecastingTrainer:
     """Runs feature engineering, model training, ensemble fitting, and persistence."""
@@ -251,16 +261,24 @@ class ForecastingTrainer:
         force_retrain: bool = False,
     ) -> TrainStatusResponse:
         """
-        For each drug:
-        1. build_feature_matrix (feature engineering)
-        2. correct_demand (censored demand)
-        3. train each requested model
-        4. walk_forward_smape for each model
-        5. Fit StackingMetaLearner across all drugs' validation predictions
-        6. Fit ConformalCalibrator on held-out set
-        7. Save all artifacts
-        8. Write ModelPerformance rows to DB
+        Train the hospital-wide SHIELD-XR ensemble (AnomalyGuard + hurdle stack +
+        3-way class-conditional ensemble + weekly breakdown). Cleaned training
+        panel rows are persisted to ``forecast_training_data``.
         """
+        if not models_to_train or all(name in SHIELD_XR_MODEL_ALIASES for name in models_to_train):
+            from app.forecasting.shield_xr.trainer import (
+                ShieldXRTrainer,
+                resolve_training_drug_codes,
+            )
+
+            codes = resolve_training_drug_codes(db_session, drug_codes or None)
+            return ShieldXRTrainer().train_all(
+                codes,
+                models_to_train,
+                db_session,
+                force_retrain=force_retrain,
+            )
+
         valid_models = [name for name in models_to_train if name in MODEL_REGISTRY]
         unknown = sorted(set(models_to_train) - set(valid_models))
         if unknown:

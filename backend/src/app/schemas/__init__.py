@@ -1,3 +1,3 @@
-from app.schemas.receipt_upload import ReceiptRowError, UploadReceiptsResponse
+from app.schemas.receipt_upload import ReceiptRowError, UploadHospitalReceiptsResponse
 
-__all__ = ["ReceiptRowError", "UploadReceiptsResponse"]
+__all__ = ["ReceiptRowError", "UploadHospitalReceiptsResponse"]

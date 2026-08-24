@@ -15,6 +15,7 @@ import type {
   DrugDetailResponse,
   PaginatedReceiptDrugSearchResponse,
   PerformanceMonitoringResponse,
+  ShieldXRStatusResponse,
   TrainForecastingRequest,
   TrainForecastingResponse,
   LoginPayload,
@@ -37,7 +38,7 @@ const TRAINING_PATHS = new Set([
   "/cold-start/train-maml",
   "/forecasting/train",
   "/forecasting/holdout",
-  "/upload-receipts",
+  "/upload-hospital-receipts",
 ]);
 
 async function parseError(res: Response, path: string): Promise<string> {
@@ -49,7 +50,7 @@ async function parseError(res: Response, path: string): Promise<string> {
   }
   if (res.status >= 500 && TRAINING_PATHS.has(path)) {
     const longRunningHint =
-      path === "/upload-receipts"
+      path === "/upload-hospital-receipts"
         ? "Large spreadsheets can take several minutes — check the backend terminal; " +
           "if ingestion finished there, refresh the page."
         : "Large catalogs can take 1–2 minutes — check the backend terminal; " +
@@ -173,6 +174,15 @@ export async function trainForecasting(
   return res.json();
 }
 
+export async function fetchShieldXRStatus(): Promise<ShieldXRStatusResponse> {
+  const path = "/forecasting/status";
+  const res = await backendFetch(path);
+  if (!res.ok) {
+    throw new Error(await parseError(res, path));
+  }
+  return res.json();
+}
+
 export async function fetchForecastingPerformance(params?: {
   drug_code?: string;
   model_name?: string;
@@ -235,6 +245,24 @@ export async function runHoldoutValidation(
   return res.json();
 }
 
+export async function searchEnrichedDrugCodes(
+  query: string,
+  page = 1,
+  pageSize = 10,
+): Promise<PaginatedReceiptDrugSearchResponse> {
+  const params = new URLSearchParams({
+    q: query,
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  const path = `/forecasting/enriched-drugs/search?${params}`;
+  const res = await backendFetch(path);
+  if (!res.ok) {
+    throw new Error(await parseError(res, path));
+  }
+  return res.json();
+}
+
 export async function searchReceiptDrugCodes(
   query: string,
   page = 1,
@@ -275,7 +303,7 @@ export async function searchForecastedDrugs(
 }
 
 export async function uploadReceipts(file: File): Promise<UploadReceiptsResponse> {
-  const path = "/upload-receipts";
+  const path = "/upload-hospital-receipts";
   const form = new FormData();
   form.append("file", file);
 

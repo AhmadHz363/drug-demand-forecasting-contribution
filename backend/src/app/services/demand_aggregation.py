@@ -1,10 +1,6 @@
 """Aggregate pharmacy receipt lines into daily drug demand.
 
 Source of truth for training/inference demand history is ``drug_receipts``.
-``daily_drug_demand`` is a materialized aggregate refreshed from receipts.
-
-Daily totals are **net inpatient consumption** (sales − returns − cancel sales).
-Inter-department transfers and other ledger movements are excluded.
 """
 
 from __future__ import annotations
@@ -16,7 +12,6 @@ from typing import Optional
 from sqlalchemy import case, cast, Float, func, or_
 from sqlalchemy.orm import Session
 
-from app.models.daily_drug_demand import DailyDrugDemand
 from app.models.drug_receipt import DrugReceipt
 from app.services.import_coverage import (
     ensure_default_coverage_from_receipt_bounds,
@@ -327,67 +322,3 @@ def aggregate_receipt_rows_in_memory(
         key = (code, demand_date)
         totals[key] = totals.get(key, 0.0) + contrib
     return {key: clip_daily_demand(value) for key, value in totals.items()}
-
-
-def sync_daily_demand_from_receipts(
-    db_session: Session,
-    *,
-    drug_codes: Optional[list[str]] = None,
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-) -> int:
-    """
-    Refresh ``daily_drug_demand`` rows from ``drug_receipts``.
-
-    Aggregates across all centers (``center_syn_id`` is not stored on
-    ``daily_drug_demand``). For center-specific views, query receipts directly.
-    """
-    aggregates = _aggregate_query(
-        db_session,
-        drug_codes=drug_codes,
-        start_date=start_date,
-        end_date=end_date,
-        center_syn_id=None,
-    ).all()
-
-    codes_to_refresh = drug_codes or sorted({row.drug_code for row in aggregates})
-    if not codes_to_refresh:
-        logger.info("No receipt rows found to sync into daily_drug_demand")
-        return 0
-
-    delete_query = db_session.query(DailyDrugDemand).filter(
-        DailyDrugDemand.drug_code.in_(codes_to_refresh)
-    )
-    if start_date is not None:
-        delete_query = delete_query.filter(DailyDrugDemand.demand_date >= start_date)
-    if end_date is not None:
-        delete_query = delete_query.filter(DailyDrugDemand.demand_date <= end_date)
-    delete_query.delete(synchronize_session=False)
-
-    payload = [
-        {
-            "drug_code": row.drug_code,
-            "demand_date": row.demand_date,
-            "total_quantity": clip_daily_demand(float(row.total_quantity)),
-        }
-        for row in aggregates
-    ]
-    if payload:
-        db_session.bulk_insert_mappings(DailyDrugDemand, payload)
-    db_session.flush()
-    logger.info(
-        "Synced %d daily_drug_demand rows from drug_receipts for %d drug(s)",
-        len(payload),
-        len(codes_to_refresh),
-    )
-    return len(payload)
-
-
-def ensure_daily_demand_materialized(
-    db_session: Session,
-    drug_code: str,
-    center_syn_id: Optional[str] = None,
-) -> None:
-    """Materialize receipt aggregates when using the global (all-centers) demand table."""
-    if center_syn_id is None:
-        sync_daily_demand_from_receipts(db_session, drug_codes=[drug_code])

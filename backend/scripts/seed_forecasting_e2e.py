@@ -29,12 +29,9 @@ if str(_SCRIPTS) not in sys.path:
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
-from app.models.daily_drug_demand import DailyDrugDemand
 from app.models.drug_receipt import DrugReceipt
 from app.models.forecast_result import ForecastResult
 from app.models.model_performance import ModelPerformance
-from app.models.stockout_flag import StockoutFlag
-from app.services.demand_aggregation import sync_daily_demand_from_receipts
 from app.services.drug_registry import insert_receipt_rows
 from seed_cold_start_e2e import (
     CATALOG_DRUGS,
@@ -72,18 +69,12 @@ def clear_forecasting_outputs(db: Session, drug_codes: list[str]) -> None:
     db.query(ModelPerformance).filter(ModelPerformance.drug_code.in_(drug_codes)).delete(
         synchronize_session=False
     )
-    db.query(StockoutFlag).filter(StockoutFlag.drug_code.in_(drug_codes)).delete(
-        synchronize_session=False
-    )
     db.commit()
 
 
 def seed_receipt_history(db: Session) -> int:
     codes = e2e_drug_codes()
     db.query(DrugReceipt).filter(DrugReceipt.drug_code.in_(codes)).delete(
-        synchronize_session=False
-    )
-    db.query(DailyDrugDemand).filter(DailyDrugDemand.drug_code.in_(codes)).delete(
         synchronize_session=False
     )
 
@@ -109,9 +100,7 @@ def seed_receipt_history(db: Session) -> int:
 
     insert_receipt_rows(db, receipt_rows)
     db.commit()
-    synced = sync_daily_demand_from_receipts(db, drug_codes=codes)
-    db.commit()
-    return synced
+    return len(receipt_rows)
 
 
 def seed_all(db: Session, *, reset: bool = True) -> tuple[int, int]:

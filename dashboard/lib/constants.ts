@@ -82,6 +82,9 @@ export function coldStartRemainingPercent(observationCount: number): number {
 
 export const MAX_FORECAST_HORIZON = 30;
 
+export const SHIELD_XR_MODEL = "shield_xr" as const;
+
+/** Legacy ensemble model ids — kept for API response compatibility. */
 export const FORECAST_MODELS = ["sarima", "lgbm", "classical"] as const;
 
 export type ForecastModelId = (typeof FORECAST_MODELS)[number];

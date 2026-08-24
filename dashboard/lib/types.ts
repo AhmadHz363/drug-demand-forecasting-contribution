@@ -66,8 +66,8 @@ export interface ForecastRequest {
   drug_code: string;
   horizon_days: number;
   center_syn_id?: string;
-  include_shap: boolean;
-  include_attention: boolean;
+  include_shap?: boolean;
+  include_attention?: boolean;
 }
 
 export interface TrainForecastingRequest {
@@ -137,12 +137,33 @@ export interface DrugQualitySummary {
   reasons: string[];
 }
 
+export interface ShieldXRAccuracySummary {
+  daily_ensemble_accuracy_pct?: number;
+  hospital_weekly_accuracy_pct?: number;
+  reconciled_weekly_per_drug_mean_accuracy_pct?: number;
+  reconciled_weekly_per_drug_median_accuracy_pct?: number;
+  volume_weighted_weekly_accuracy_pct?: number;
+  non_lumpy_weekly_accuracy_pct?: number;
+  hybrid_abc_combined_accuracy_pct?: number;
+  per_sb_class_weekly_accuracy_pct?: Record<string, number>;
+}
+
+export interface ShieldXRStatusResponse {
+  models_ready: boolean;
+  training_run_id?: string | null;
+  train_end?: string | null;
+  valid_end?: string | null;
+  n_skus?: number | null;
+  accuracy_summary?: ShieldXRAccuracySummary;
+}
+
 export interface TrainForecastingResponse {
   status: string;
   training_run_id?: string;
   drugs_trained: number;
   models_trained: string[];
   smape_summary: Record<string, number>;
+  accuracy_summary?: ShieldXRAccuracySummary;
   artifacts_saved: string[];
   skipped_drugs?: DrugQualitySummary[];
   flagged_drugs?: DrugQualitySummary[];
@@ -272,7 +293,13 @@ export interface ReceiptRowError {
 }
 
 export interface UploadReceiptsResponse {
+  raw_inserted_rows: number;
+  raw_failed_rows: number;
+  enriched_inserted_rows: number;
+  filtered_out_rows: number;
+  /** Legacy alias for raw_inserted_rows */
   inserted_rows: number;
+  /** Legacy alias for raw_failed_rows */
   failed_rows: number;
   errors: ReceiptRowError[];
 }

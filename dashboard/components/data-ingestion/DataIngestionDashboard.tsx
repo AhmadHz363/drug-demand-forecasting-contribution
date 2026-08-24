@@ -38,8 +38,8 @@ export function DataIngestionDashboard() {
                 Data Ingestion
               </h1>
               <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-500">
-                Upload pharmacy receipt spreadsheets to populate drug_receipts and refresh daily
-                demand aggregates used by forecasting and cold-start modules.
+                Upload hospital pharmacy Excel exports. Raw receipt lines are stored as-is, then
+                cleaned into the daily demand training panel (inpatient sales only).
               </p>
             </div>
           </div>

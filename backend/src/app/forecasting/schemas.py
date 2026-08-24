@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Optional
+from typing import Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -20,7 +20,7 @@ class ForecastRequest(BaseModel):
 
 class TrainForecastingRequest(BaseModel):
     drug_codes: Optional[list[str]] = None
-    models: list[str] = ["sarima", "lgbm", "classical"]
+    models: list[str] = ["shield_xr"]
     force_retrain: bool = False
 
 
@@ -196,6 +196,26 @@ class DrugQualitySummary(BaseModel):
     reasons: list[str] = Field(default_factory=list)
 
 
+class ShieldXRAccuracySummary(BaseModel):
+    daily_ensemble_accuracy_pct: Optional[float] = None
+    hospital_weekly_accuracy_pct: Optional[float] = None
+    reconciled_weekly_per_drug_mean_accuracy_pct: Optional[float] = None
+    reconciled_weekly_per_drug_median_accuracy_pct: Optional[float] = None
+    volume_weighted_weekly_accuracy_pct: Optional[float] = None
+    non_lumpy_weekly_accuracy_pct: Optional[float] = None
+    hybrid_abc_combined_accuracy_pct: Optional[float] = None
+    per_sb_class_weekly_accuracy_pct: dict[str, float] = Field(default_factory=dict)
+
+
+class ShieldXRStatusResponse(BaseModel):
+    models_ready: bool
+    training_run_id: Optional[str] = None
+    train_end: Optional[str] = None
+    valid_end: Optional[str] = None
+    n_skus: Optional[int] = None
+    accuracy_summary: ShieldXRAccuracySummary = Field(default_factory=ShieldXRAccuracySummary)
+
+
 class TrainStatusResponse(BaseModel):
     status: str
     training_run_id: str = ""
@@ -203,6 +223,7 @@ class TrainStatusResponse(BaseModel):
     models_trained: list[str]
     smape_summary: dict[str, float]
     artifacts_saved: list[str]
+    accuracy_summary: dict[str, Union[float, dict[str, float]]] = Field(default_factory=dict)
     skipped_drugs: list[DrugQualitySummary] = Field(default_factory=list)
     flagged_drugs: list[DrugQualitySummary] = Field(default_factory=list)
     drift_alerts: list[str] = Field(

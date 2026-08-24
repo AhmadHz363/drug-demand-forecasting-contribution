@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 
 from app.models.drug_receipt import DrugReceipt
 from app.schemas.receipt_upload import ReceiptRowError
-from app.services.demand_aggregation import sync_daily_demand_from_receipts
 from app.services.category_registry import attach_category_ids, upsert_categories_from_receipt_rows
 from app.services.drug_registry import attach_drug_ids, upsert_drugs_from_receipt_rows
 from app.services.import_coverage import content_hash_bytes, record_import_coverage
@@ -426,7 +425,6 @@ def ingest_receipt_file(
                     len(parsed_rows),
                 )
         affected_codes = sorted({row["drug_code"] for row in parsed_rows})
-        sync_daily_demand_from_receipts(db, drug_codes=affected_codes)
         receipt_dates = [row["receipt_date"] for row in parsed_rows]
         centers = {
             str(row["center_syn_id"]).strip()
@@ -445,7 +443,7 @@ def ingest_receipt_file(
         )
         db.commit()
         logger.info(
-            "Inserted %s drug receipt rows (replaced=%s); failed=%s; duplicates_skipped=%s; synced %d drug(s) to daily_drug_demand",
+            "Inserted %s drug receipt rows (replaced=%s); failed=%s; duplicates_skipped=%s; drugs=%d",
             inserted,
             replaced,
             len(errors),

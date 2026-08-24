@@ -146,12 +146,12 @@ class TestBuildFeatureMatrixIntegration:
     def test_alembic_at_head(self):
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "20260713_0010"
+        assert version == "20260813_0014"
 
     def test_stub_tables_exist(self):
         tables = set(inspect(engine).get_table_names())
         assert "hospital_census" in tables
-        assert "supplier_lead_times" in tables
+        assert "supplier_lead_times" not in tables
 
     def test_no_nan_values(self, drug_code: str, date_range: tuple[date, date]):
         start, end = date_range
@@ -208,7 +208,6 @@ class TestBuildFeatureMatrixIntegration:
         assert df["supplier_lead_time_std"].isna().all()
         assert df["supplier_reliability_score"].isna().all()
         assert (df["supplier_features_is_default"] == 1).all()
-        assert "supplier_lead_times" in caplog.text
 
     def test_lag_7d_spot_check(self, drug_code: str, date_range: tuple[date, date]):
         start, end = date_range

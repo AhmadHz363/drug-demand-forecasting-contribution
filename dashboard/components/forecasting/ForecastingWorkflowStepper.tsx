@@ -2,41 +2,64 @@
 
 import { Check, Circle } from "lucide-react";
 
-export type ForecastingWorkflowStep = "setup" | "configure" | "results";
+export type ForecastingWorkflowStep = "train" | "validate" | "forecast";
 
 interface ForecastingWorkflowStepperProps {
   modelsReady: boolean;
+  hasValidationMetrics: boolean;
   hasPrediction: boolean;
   activeStep: ForecastingWorkflowStep;
 }
 
 const STEPS: { id: ForecastingWorkflowStep; label: string; hint: string }[] = [
-  { id: "setup", label: "Train models", hint: "SARIMA · LGBM · Classical" },
-  { id: "configure", label: "Select drug", hint: "Choose catalog drug" },
-  { id: "results", label: "View forecast", hint: "Run prediction" },
+  {
+    id: "train",
+    label: "Train ensemble",
+    hint: "AnomalyGuard + 3-way daily model + weekly reconcile",
+  },
+  {
+    id: "validate",
+    label: "Review validation",
+    hint: "Hold-out WAPE · SB class breakdown · per-drug accuracy",
+  },
+  {
+    id: "forecast",
+    label: "Weekly forecast",
+    hint: "Reconciled per-SKU breakdown for procurement",
+  },
 ];
 
 function stepComplete(
   id: ForecastingWorkflowStep,
   modelsReady: boolean,
+  hasValidationMetrics: boolean,
   hasPrediction: boolean,
 ): boolean {
-  if (id === "setup") return modelsReady;
-  if (id === "configure") return modelsReady;
-  if (id === "results") return hasPrediction;
+  if (id === "train") return modelsReady;
+  if (id === "validate") return hasValidationMetrics;
+  if (id === "forecast") return hasPrediction;
   return false;
 }
 
 export function ForecastingWorkflowStepper({
   modelsReady,
+  hasValidationMetrics,
   hasPrediction,
   activeStep,
 }: ForecastingWorkflowStepperProps) {
   return (
-    <nav aria-label="Workflow progress" className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <nav
+      aria-label="SHIELD-XR workflow"
+      className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+    >
       <ol className="grid gap-3 sm:grid-cols-3 sm:gap-4">
         {STEPS.map((step, index) => {
-          const done = stepComplete(step.id, modelsReady, hasPrediction);
+          const done = stepComplete(
+            step.id,
+            modelsReady,
+            hasValidationMetrics,
+            hasPrediction,
+          );
           const isActive = step.id === activeStep;
           const stepNum = index + 1;
 
@@ -77,8 +100,4 @@ export function ForecastingWorkflowStepper({
       </ol>
     </nav>
   );
-}
-
-export function scrollToSection(id: string) {
-  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }

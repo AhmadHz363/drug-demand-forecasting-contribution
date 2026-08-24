@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
 from typing import Optional
 
 import pandas as pd
@@ -15,7 +14,6 @@ from app.forecasting.censored_demand.em_sarima import em_corrected_series
 from app.forecasting.censored_demand.survival import apply_weibull_correction
 from app.forecasting.censored_demand.tobit import apply_tobit_correction
 from app.forecasting.constants import STOCKOUT_RATE_THRESHOLD
-from app.models.stockout_flag import StockoutFlag
 
 logger = logging.getLogger(__name__)
 
@@ -99,36 +97,6 @@ def _restore_index(feature_df: pd.DataFrame, working: pd.DataFrame) -> pd.DataFr
     return working
 
 
-def _flag_date(value: object) -> date:
-    if isinstance(value, date):
-        return value
-    return pd.Timestamp(value).date()
-
-
-def _write_stockout_flags(
-    db_session: Session,
-    drug_code: str,
-    center_syn_id: Optional[str],
-    working: pd.DataFrame,
-) -> None:
-    stockout_rows = working.loc[working["is_stockout"].astype(bool)]
-    if stockout_rows.empty:
-        return
-    flags = [
-        StockoutFlag(
-            drug_code=drug_code,
-            center_syn_id=center_syn_id,
-            flag_date=_flag_date(row["demand_date"]),
-            observed_quantity=0.0,
-            estimated_true_demand=float(row["total_quantity"]),
-            correction_method=str(row.get("correction_method") or "none"),
-        )
-        for _, row in stockout_rows.iterrows()
-    ]
-    db_session.add_all(flags)
-    db_session.flush()
-
-
 def correct_demand(
     drug_code: str,
     center_syn_id: Optional[str],
@@ -136,16 +104,16 @@ def correct_demand(
     feature_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Full censored demand correction pipeline:
+    Full censored demand correction pipeline (legacy — not used by SHIELD-XR):
 
     1. Detect stockout windows
     2. Choose correction method based on stockout_rate
     3. Apply correction
-    4. Write stockout_flag rows to the stockout_flags table
-    5. Return the feature_df with total_quantity corrected
+    4. Return the feature_df with total_quantity corrected
 
     Also adds em_corrected_quantity for SARIMA training.
     """
+    del center_syn_id
     original_qty = feature_df["total_quantity"].astype(float).copy()
     working = apply_consumption_demand(_as_working_frame(feature_df))
     working["observed_quantity"] = working["total_quantity"].astype(float).copy()
@@ -170,7 +138,6 @@ def correct_demand(
 
     working["em_corrected_quantity"] = em_corrected_series(working)
     _log_imputation_stats(working, drug_code, stockout_rate, correction_method)
-    _write_stockout_flags(db_session, drug_code, center_syn_id, working)
 
     result = _restore_index(feature_df, working)
     result["observed_quantity"] = working["observed_quantity"].astype(float).values

@@ -656,6 +656,25 @@ class DrugForecaster:
         include_attention: bool,
         db_session: Session,
     ) -> ForecastResponse:
+        from app.forecasting.shield_xr.artifacts import is_trained as shield_xr_is_trained
+        from app.forecasting.shield_xr.forecaster import (
+            ShieldXRForecaster,
+            ShieldXRNotTrainedError,
+        )
+
+        if shield_xr_is_trained():
+            try:
+                return ShieldXRForecaster().forecast(
+                    drug_code=drug_code,
+                    horizon_days=horizon_days,
+                    center_syn_id=center_syn_id,
+                    db_session=db_session,
+                )
+            except ShieldXRNotTrainedError as exc:
+                raise NoTrainedModelsError(str(exc)) from exc
+            except ValueError as exc:
+                raise DrugNotInCatalogError(str(exc)) from exc
+
         started = time.perf_counter()
         self._assert_drug_has_receipt_history(drug_code, center_syn_id, db_session)
 
