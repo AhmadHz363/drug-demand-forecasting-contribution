@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from app.forecasting.drift_detection import assess_metric_drift
 from app.forecasting.schemas import ModelPerformanceRow, PerformanceMonitoringResponse
-from app.models.forecast_result import ForecastResult
 from app.models.model_performance import ModelPerformance
 
 
@@ -18,20 +17,8 @@ def _latest_weight_snapshot(
     db_session: Session,
     drug_code: str,
 ) -> Optional[tuple[float, float, float, datetime]]:
-    row = (
-        db_session.query(ForecastResult)
-        .filter(ForecastResult.drug_code == drug_code)
-        .order_by(desc(ForecastResult.generated_at))
-        .first()
-    )
-    if row is None:
-        return None
-    return (
-        float(row.model_weight_sarima),
-        float(row.model_weight_lgbm),
-        float(row.model_weight_classical),
-        row.generated_at,
-    )
+    del db_session, drug_code
+    return None
 
 
 def _previous_run_metrics(

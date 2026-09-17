@@ -1,12 +1,6 @@
 """Forecasting engine — demand forecasting models and ensemble pipeline."""
 
-from app.forecasting.censored_demand.corrector import correct_demand
 from app.forecasting.constants import ARTIFACTS_DIR, FORECAST_HORIZON
-from app.forecasting.ensemble.conformal import ConformalCalibrator, extend_tail_quantiles
-from app.forecasting.ensemble.stacking import StackingMetaLearner
-from app.forecasting.feature_engineering.pipeline import build_feature_matrix
-from app.forecasting.models.base_model import BaseForecastingModel
-from app.forecasting.models.sarima_model import SarimaModel
 from app.forecasting.schemas import (
     AttentionWeight,
     BatchForecastRequest,
@@ -18,7 +12,6 @@ from app.forecasting.schemas import (
     TrainForecastingRequest,
     TrainStatusResponse,
 )
-from app.forecasting.training.walk_forward import walk_forward_smape
 
 __all__ = [
     "ARTIFACTS_DIR",
@@ -32,20 +25,34 @@ __all__ = [
     "ShapFeature",
     "TrainForecastingRequest",
     "TrainStatusResponse",
-    "BaseForecastingModel",
-    "SarimaModel",
-    "LightGBMModel",
-    "ClassicalModel",
-    "build_feature_matrix",
-    "correct_demand",
-    "walk_forward_smape",
-    "StackingMetaLearner",
-    "ConformalCalibrator",
-    "extend_tail_quantiles",
 ]
 
 
 def __getattr__(name: str):
+    if name == "correct_demand":
+        from app.forecasting.censored_demand.corrector import correct_demand
+
+        return correct_demand
+    if name in {"ConformalCalibrator", "extend_tail_quantiles"}:
+        from app.forecasting.ensemble import conformal
+
+        return getattr(conformal, name)
+    if name == "StackingMetaLearner":
+        from app.forecasting.ensemble.stacking import StackingMetaLearner
+
+        return StackingMetaLearner
+    if name == "build_feature_matrix":
+        from app.forecasting.feature_engineering.pipeline import build_feature_matrix
+
+        return build_feature_matrix
+    if name == "BaseForecastingModel":
+        from app.forecasting.models.base_model import BaseForecastingModel
+
+        return BaseForecastingModel
+    if name == "SarimaModel":
+        from app.forecasting.models.sarima_model import SarimaModel
+
+        return SarimaModel
     if name == "LightGBMModel":
         from app.forecasting.models.lgbm_model import LightGBMModel
 
@@ -54,4 +61,8 @@ def __getattr__(name: str):
         from app.forecasting.models.classical_model import ClassicalModel
 
         return ClassicalModel
+    if name == "walk_forward_smape":
+        from app.forecasting.training.walk_forward import walk_forward_smape
+
+        return walk_forward_smape
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

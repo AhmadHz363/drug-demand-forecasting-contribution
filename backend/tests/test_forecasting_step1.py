@@ -18,17 +18,6 @@ from app.forecasting import constants, schemas
 from app.forecasting.constants import ARTIFACTS_DIR, FORECAST_HORIZON
 from app.forecasting.schemas import ForecastRequest, TrainForecastingRequest
 
-STOCKOUT_FLAG_COLUMNS = {
-    "id",
-    "drug_code",
-    "center_syn_id",
-    "flag_date",
-    "observed_quantity",
-    "estimated_true_demand",
-    "correction_method",
-    "created_at",
-}
-
 FORECAST_RESULT_COLUMNS = {
     "id",
     "drug_code",
@@ -104,7 +93,7 @@ class TestForecastingSchemas:
     def test_train_request_defaults(self):
         req = TrainForecastingRequest()
         assert req.drug_codes is None
-        assert req.models == ["sarima", "lgbm", "classical"]
+        assert req.models == ["shield_xr"]
         assert req.force_retrain is False
 
 
@@ -130,11 +119,14 @@ class TestForecastingDatabaseIntegration:
     def test_alembic_at_head(self):
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "20260713_0010"
+        assert version == "20260813_0014"
 
-    def test_stockout_flags_table_schema(self):
-        cols = {c["name"] for c in inspect(engine).get_columns("stockout_flags")}
-        assert STOCKOUT_FLAG_COLUMNS == cols
+    def test_forecast_training_data_table_exists(self):
+        tables = set(inspect(engine).get_table_names())
+        assert "forecast_training_data" in tables
+        assert "stockout_flags" not in tables
+        assert "daily_drug_demand" not in tables
+        assert "supplier_lead_times" not in tables
 
     def test_forecast_results_table_schema(self):
         cols = {c["name"] for c in inspect(engine).get_columns("forecast_results")}
@@ -143,11 +135,6 @@ class TestForecastingDatabaseIntegration:
     def test_model_performance_table_schema(self):
         cols = {c["name"] for c in inspect(engine).get_columns("model_performance")}
         assert MODEL_PERFORMANCE_COLUMNS == cols
-
-    def test_stockout_flags_indexes(self):
-        indexes = {idx["name"] for idx in inspect(engine).get_indexes("stockout_flags")}
-        assert "ix_stockout_flags_drug_code" in indexes
-        assert "ix_stockout_flags_flag_date" in indexes
 
     def test_forecast_results_indexes(self):
         indexes = {idx["name"] for idx in inspect(engine).get_indexes("forecast_results")}

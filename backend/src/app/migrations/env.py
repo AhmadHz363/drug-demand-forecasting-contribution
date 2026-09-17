@@ -14,15 +14,11 @@ from sqlalchemy import create_engine, pool
 
 from app.core.config import settings
 from app.core.database import Base
-from app.models.daily_drug_demand import DailyDrugDemand  # noqa: F401
-from app.models.drug_catalog import DrugCatalog  # noqa: F401
-from app.models.drug_receipt import DrugReceipt  # noqa: F401
-from app.models.forecast_result import ForecastResult  # noqa: F401
-from app.models.hospital_census import HospitalCensus  # noqa: F401
-from app.models.import_coverage import ImportCoverage  # noqa: F401
+from app.models.forecast_training_data import ForecastTrainingData  # noqa: F401
+from app.models.hospital_daily_demand_enriched import HospitalDailyDemandEnriched  # noqa: F401
+from app.models.hospital_receipt_raw import HospitalReceiptRaw  # noqa: F401
 from app.models.model_performance import ModelPerformance  # noqa: F401
-from app.models.stockout_flag import StockoutFlag  # noqa: F401
-from app.models.supplier_lead_time import SupplierLeadTime  # noqa: F401
+from app.models.user import User  # noqa: F401
 
 config = context.config
 

@@ -63,7 +63,7 @@ def test_register_login_and_me(client: TestClient, unique_email: str):
     assert reg.status_code == 201
     assert reg.json()["email"] == unique_email.lower()
 
-    unauth = client.get("/drugs")
+    unauth = client.get("/auth/me")
     assert unauth.status_code == 401
 
     login = client.post(
@@ -79,9 +79,6 @@ def test_register_login_and_me(client: TestClient, unique_email: str):
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert me.status_code == 200
     assert me.json()["email"] == unique_email.lower()
-
-    drugs = client.get("/drugs", headers={"Authorization": f"Bearer {token}"})
-    assert drugs.status_code == 200
 
 
 def test_login_rejects_wrong_password(client: TestClient, unique_email: str):

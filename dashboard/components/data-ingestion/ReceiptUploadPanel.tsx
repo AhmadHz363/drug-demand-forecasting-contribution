@@ -83,8 +83,8 @@ export function ReceiptUploadPanel({ disabled = false, onUpload }: ReceiptUpload
     <Panel>
       <PanelHeader
         step={1}
-        title="Upload receipt spreadsheet"
-        description="Import pharmacy receipt exports into drug_receipts. Required columns: Code and Date. Doc (receipt id) is optional."
+        title="Upload hospital Excel export"
+        description="Import raw pharmacy receipt rows, then build the cleaned daily demand panel used for SHIELD-XR training. Only inpatient sales (مـبـيع الـى مـرضـى داخلـي) contribute to demand."
       />
       <PanelBody className="space-y-4">
         <div
@@ -174,9 +174,9 @@ export function ReceiptUploadPanel({ disabled = false, onUpload }: ReceiptUpload
         <div className="rounded-xl border border-slate-100 bg-slate-50/80 px-4 py-3">
           <p className="text-xs font-medium text-slate-700">Expected columns</p>
           <p className="mt-1 text-xs leading-relaxed text-slate-500">
-            Code, Date, Doc, QTY, Article, Cat, Mov#, Mov, and other pharmacy export fields.
-            Rows missing Doc receive an auto-generated receipt id. Duplicates (same Doc + Code +
-            Date) are skipped.
+            DOC, LINE, CAT, C.R, DATE, MOV#, Mov des, CODE, ARTICLE, M, C.S, QTY, U.P, T.P, MRN,
+            AD DATE, R, U, AGE, DR. Re-uploading the same filename replaces prior raw and enriched
+            rows for that file.
           </p>
         </div>
       </PanelBody>

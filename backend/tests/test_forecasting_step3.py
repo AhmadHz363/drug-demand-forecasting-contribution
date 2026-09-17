@@ -24,7 +24,6 @@ from app.forecasting.feature_engineering.pipeline import build_feature_matrix
 from app.forecasting.feature_engineering.rolling_features import add_rolling_features
 from app.forecasting.feature_engineering.temporal_features import add_temporal_features
 from app.models.drug_receipt import DrugReceipt
-from app.models.stockout_flag import StockoutFlag
 from app.services.demand_aggregation import get_receipt_date_bounds
 
 
@@ -176,31 +175,18 @@ class TestCorrectDemandIntegration:
             pytest.skip("No drug with sufficient demand history")
         return code
 
-    def test_correct_demand_writes_stockout_flags(self, drug_code: str):
+    def test_correct_demand_applies_em_series(self, drug_code: str):
         db = SessionLocal()
         bounds = get_receipt_date_bounds(db, drug_code)
         start, end = bounds
         if (end - start).days > 120:
             start = end - timedelta(days=120)
 
-        before = (
-            db.query(func.count(StockoutFlag.id))
-            .filter(StockoutFlag.drug_code == drug_code)
-            .scalar()
-        )
         try:
             features = build_feature_matrix(drug_code, None, db, start, end)
             corrected = correct_demand(drug_code, None, db, features)
-            db.commit()
-            after = (
-                db.query(func.count(StockoutFlag.id))
-                .filter(StockoutFlag.drug_code == drug_code)
-                .scalar()
-            )
-            stockouts = int(corrected["is_stockout"].sum()) if "is_stockout" in corrected.columns else 0
-            if stockouts > 0:
-                assert after >= before + stockouts
-                assert "em_corrected_quantity" in corrected.columns
+            assert "em_corrected_quantity" in corrected.columns
+            assert corrected["total_quantity"].notna().all()
         finally:
             db.rollback()
             db.close()

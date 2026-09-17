@@ -24,9 +24,8 @@ logger = logging.getLogger("reingest_hospital_excel")
 
 def _truncate_receipt_tables() -> None:
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE TABLE daily_drug_demand RESTART IDENTITY CASCADE"))
         conn.execute(text("TRUNCATE TABLE drug_receipts RESTART IDENTITY CASCADE"))
-    logger.info("Truncated daily_drug_demand and drug_receipts")
+    logger.info("Truncated drug_receipts")
 
 
 def main(argv: list[str] | None = None) -> int:

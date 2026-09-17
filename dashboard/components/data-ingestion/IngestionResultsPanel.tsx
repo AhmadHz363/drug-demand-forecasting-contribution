@@ -104,9 +104,14 @@ export function IngestionResultsPanel({
 
   if (!result) return null;
 
-  const allSucceeded = result.inserted_rows > 0 && result.failed_rows === 0;
-  const partialSuccess = result.inserted_rows > 0 && result.failed_rows > 0;
-  const allFailed = result.inserted_rows === 0;
+  const allSucceeded =
+    result.raw_inserted_rows > 0 &&
+    result.enriched_inserted_rows > 0 &&
+    result.failed_rows === 0;
+  const partialSuccess =
+    (result.raw_inserted_rows > 0 || result.enriched_inserted_rows > 0) &&
+    (result.failed_rows > 0 || result.enriched_inserted_rows === 0);
+  const allFailed = result.raw_inserted_rows === 0;
 
   return (
     <Panel>
@@ -170,9 +175,9 @@ export function IngestionResultsPanel({
               }`}
             >
               {allSucceeded &&
-                `${result.inserted_rows.toLocaleString()} receipt row${result.inserted_rows === 1 ? "" : "s"} inserted and daily demand synced.`}
+                `${result.raw_inserted_rows.toLocaleString()} raw rows and ${result.enriched_inserted_rows.toLocaleString()} enriched SKU-day rows stored (${result.filtered_out_rows.toLocaleString()} lines filtered by movement type).`}
               {partialSuccess &&
-                `${result.inserted_rows.toLocaleString()} inserted, ${result.failed_rows.toLocaleString()} row${result.failed_rows === 1 ? "" : "s"} skipped due to validation errors.`}
+                `${result.raw_inserted_rows.toLocaleString()} raw and ${result.enriched_inserted_rows.toLocaleString()} enriched rows stored; ${result.failed_rows.toLocaleString()} issue${result.failed_rows === 1 ? "" : "s"}.`}
               {allFailed &&
                 (result.failed_rows > 0
                   ? `${result.failed_rows.toLocaleString()} row${result.failed_rows === 1 ? "" : "s"} failed validation. Review the errors below.`
@@ -181,23 +186,36 @@ export function IngestionResultsPanel({
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatChip
-            label="Inserted"
-            value={result.inserted_rows.toLocaleString()}
+            label="Raw rows"
+            value={result.raw_inserted_rows.toLocaleString()}
             accent="green"
+          />
+          <StatChip
+            label="Enriched rows"
+            value={result.enriched_inserted_rows.toLocaleString()}
+            accent="green"
+          />
+          <StatChip
+            label="Filtered out"
+            value={result.filtered_out_rows.toLocaleString()}
+            accent="slate"
           />
           <StatChip
             label="Failed"
             value={result.failed_rows.toLocaleString()}
             accent={result.failed_rows > 0 ? "amber" : "slate"}
           />
+        </div>
+
+        {result.errors.length > 0 && (
           <StatChip
             label="Error details"
             value={result.errors.length.toLocaleString()}
-            accent={result.errors.length > 0 ? "amber" : "slate"}
+            accent="amber"
           />
-        </div>
+        )}
 
         {result.errors.length > 0 && (
           <div className="overflow-hidden rounded-xl border border-slate-200">
