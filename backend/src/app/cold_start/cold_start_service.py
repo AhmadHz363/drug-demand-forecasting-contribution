@@ -1,96 +1,93 @@
-"""Orchestrator — ties Stages A (embedding), B (KNN), and C (MAML) together."""
+"""Orchestrator — CAMEO cold-start forecasting on real drug attributes + demand."""
 
 from __future__ import annotations
 
-import hashlib
 import logging
-from datetime import date
+import math
+from datetime import date, timedelta
 
+import numpy as np
 from sqlalchemy.orm import Session
 
-from app.cold_start.autoencoder.embedder import get_all_embeddings, get_embedding
-from app.cold_start.constants import COLD_START_ONLY_BELOW, KNN_MAX_CANDIDATES
+from app.cold_start.cameo.artifacts import load_artifacts
+from app.cold_start.cameo.metric_net import cameo_init_forecast
+from app.cold_start.cameo.panel import load_weekly_series, load_weekly_series_for_drug
+from app.cold_start.cameo.pipeline import forecast_cold_start_weeks, run_cameo
+from app.cold_start.constants import (
+    CAMEO_TOPK,
+    COLD_START_ONLY_BELOW,
+    PHARMACIST_ESTIMATE_WEIGHT,
+)
+from app.cold_start.drugs_adapter import get_drug_metadata, load_library_drug_metadata
 from app.cold_start.graduation import decide_stage, get_observation_count
-from app.cold_start.knn_bootstrap.bootstrap import compute_baseline_forecast
-from app.cold_start.knn_bootstrap.similarity import find_nearest_neighbours
-from app.cold_start.maml.adapter import adapt_and_forecast
-from app.cold_start.receipt_adapter import load_receipt_drug_metadata
-from app.cold_start.schemas import ColdStartPredictRequest, ColdStartPredictResponse
-from app.services.demand_aggregation import load_demand_series_from_receipts
+from app.cold_start.schemas import ColdStartPredictRequest, ColdStartPredictResponse, DailyForecast
 
 logger = logging.getLogger(__name__)
 
-_library_embedding_cache: dict[str, tuple[list[list[float]], list[str]]] = {}
+
+class DrugsTableEmptyError(ValueError):
+    """Raised when the drugs table has no matched_source rows for the library."""
 
 
-class DrugReceiptsEmptyError(ValueError):
-    """Raised when drug_receipts has no rows usable for KNN."""
-
-
-DrugCatalogEmptyError = DrugReceiptsEmptyError
+DrugCatalogEmptyError = DrugsTableEmptyError
+DrugReceiptsEmptyError = DrugsTableEmptyError
 
 
 def invalidate_library_embedding_cache() -> None:
-    """Clear cached receipt-library embeddings (call after receipt or embedder changes)."""
-    _library_embedding_cache.clear()
+    from app.cold_start.cameo.artifacts import clear_artifact_cache
+
+    clear_artifact_cache()
 
 
-def _library_cache_key(drug_codes: list[str]) -> str:
-    joined = ",".join(sorted(drug_codes))
-    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+def _weekly_to_daily_forecast(
+    weekly_values: np.ndarray,
+    horizon_days: int,
+    *,
+    half_width_weekly: float,
+    start_date: date | None = None,
+) -> list[DailyForecast]:
+    if start_date is None:
+        start_date = date.today() + timedelta(days=1)
 
-
-def _load_library_embeddings(db: Session) -> tuple[list[list[float]], list[str]]:
-    metadata_list = load_receipt_drug_metadata(db)
-    drug_codes = [meta.drug_code for meta in metadata_list]
-    if not drug_codes:
-        raise DrugReceiptsEmptyError(
-            "drug_receipts is empty. Load receipt history before predicting."
+    daily_half = half_width_weekly / 7.0
+    forecasts: list[DailyForecast] = []
+    for day_offset in range(horizon_days):
+        week_idx = min(day_offset // 7, len(weekly_values) - 1)
+        daily_level = float(weekly_values[week_idx]) / 7.0
+        forecasts.append(
+            DailyForecast(
+                date=start_date + timedelta(days=day_offset),
+                p10=max(0.0, daily_level - daily_half),
+                p50=daily_level,
+                p90=daily_level + daily_half,
+            )
         )
-
-    cache_key = _library_cache_key(drug_codes)
-    cached = _library_embedding_cache.get(cache_key)
-    if cached is not None:
-        return cached
-
-    embeddings = get_all_embeddings(metadata_list)
-    result = (embeddings, drug_codes)
-    _library_embedding_cache[cache_key] = result
-    logger.debug(
-        "Cached embeddings for %d receipt drugs (key=%s…)",
-        len(drug_codes),
-        cache_key[:12],
-    )
-    return result
+    return forecasts
 
 
-def _fetch_real_observations(db: Session, drug_code: str) -> list[tuple[date, float]]:
-    return load_demand_series_from_receipts(db, drug_code)
+def _apply_pharmacist_blend(
+    weekly_values: np.ndarray,
+    pharmacist_weekly: float,
+    confidence: float,
+) -> np.ndarray:
+    weight = PHARMACIST_ESTIMATE_WEIGHT * confidence
+    return (1.0 - weight) * weekly_values + weight * pharmacist_weekly
 
 
-def _build_uncertainty_note(
-    stage: str,
-    observation_count: int,
-    neighbour_count: int,
-) -> str:
-    if stage == "full_ensemble":
-        return (
-            "This drug has sufficient history. Route to full forecasting ensemble."
-        )
+def _build_uncertainty_note(stage: str, observation_count: int, neighbour_count: int) -> str:
     if stage == "blended":
         return (
-            f"Forecast blends similarity-based baseline with a meta-learned model "
-            f"using {observation_count} real observation(s). Confidence improves as "
-            f"more data is collected (graduation at 12+ days)."
+            f"CAMEO online tracker active with {observation_count} day(s) of real demand. "
+            "Confidence improves as more weekly observations accumulate."
         )
-    if neighbour_count < 5:
+    if neighbour_count < CAMEO_TOPK:
         return (
-            f"Cold-start forecast from {neighbour_count} similar receipt drug(s); "
-            "limited neighbour coverage may widen uncertainty."
+            f"CAMEO cold-start forecast from {neighbour_count} analog drug(s); "
+            "limited library coverage may widen uncertainty."
         )
     return (
-        "Cold-start forecast from the five most similar drugs in receipt history. "
-        f"No real demand history yet for this drug ({observation_count} observation(s))."
+        "CAMEO cold-start forecast from metric-learning analogs in the matched-source library. "
+        f"No real demand history yet ({observation_count} observation day(s))."
     )
 
 
@@ -99,51 +96,119 @@ class ColdStartService:
         self.db = db_session
 
     def predict(self, request: ColdStartPredictRequest) -> ColdStartPredictResponse:
-        """
-        Full pipeline: embed → KNN → baseline → graduation → optional MAML → response.
-        """
         drug = request.drug_metadata
-        horizon = request.forecast_horizon_days
+        horizon_days = request.forecast_horizon_days
+        horizon_weeks = max(1, math.ceil(horizon_days / 7))
 
-        embedding = get_embedding(drug)
-
-        library_embeddings, library_codes = _load_library_embeddings(self.db)
-
-        filtered_embeddings: list[list[float]] = []
-        filtered_codes: list[str] = []
-        for emb, code in zip(library_embeddings, library_codes):
-            if code != drug.drug_code:
-                filtered_embeddings.append(emb)
-                filtered_codes.append(code)
-
-        if not filtered_codes:
+        artifacts = load_artifacts()
+        library_metadata = {
+            meta.drug_code: meta
+            for meta in load_library_drug_metadata(self.db)
+            if meta.drug_code in artifacts.hist_drug_codes and meta.drug_code != drug.drug_code
+        }
+        if not library_metadata:
             raise ValueError(
-                "No other drugs in drug_receipts to compare against. "
-                "Load additional receipt history before predicting."
+                "No historical library drugs available after excluding the target drug."
             )
 
-        candidates = find_nearest_neighbours(
-            embedding,
-            filtered_embeddings,
-            filtered_codes,
-            k=min(KNN_MAX_CANDIDATES, len(filtered_codes)),
-        )
+        library_codes = sorted(library_metadata.keys())
+        weekly_by_code = load_weekly_series(self.db, library_codes)
 
-        baseline, neighbours = compute_baseline_forecast(
-            candidates,
-            self.db,
-            horizon,
-            request.pharmacist_estimate,
+        hist_codes: list[str] = []
+        hist_series: list[np.ndarray] = []
+        hist_metadata = []
+        for code in library_codes:
+            series = weekly_by_code.get(code)
+            if series is None or len(series) < artifacts.min_weeks:
+                continue
+            hist_codes.append(code)
+            hist_series.append(series)
+            hist_metadata.append(library_metadata[code])
+
+        if not hist_codes:
+            raise ValueError(
+                "Historical library drugs lack sufficient weekly demand history. "
+                "Ingest hospital_daily_demand_enriched and retrain CAMEO."
+            )
+
+        attrs_raw = artifacts.feature_encoder.transform(hist_metadata)
+        hist_attrs_scaled = artifacts.scale_attrs(attrs_raw)
+        hist_embeds = artifacts.metric_net.embed(hist_attrs_scaled)
+
+        new_attr_raw = artifacts.feature_encoder.transform([drug])[0]
+        new_attr_scaled = artifacts.scale_attrs(new_attr_raw.reshape(1, -1))[0]
+
+        init = cameo_init_forecast(
+            new_attr_scaled,
+            hist_embeds,
+            hist_series,
+            artifacts.metric_net,
+            topk=artifacts.topk,
         )
+        neighbours = [(hist_codes[i], float(init.weights[j])) for j, i in enumerate(init.order)]
+        embedding = artifacts.metric_net.embed(new_attr_scaled.reshape(1, -1))[0].tolist()
 
         observation_count = get_observation_count(drug.drug_code, self.db)
         stage = decide_stage(observation_count)
 
-        if observation_count >= COLD_START_ONLY_BELOW:
-            observations = _fetch_real_observations(self.db, drug.drug_code)
-            forecast = adapt_and_forecast(observations, horizon, baseline)
+        if stage == "full_ensemble":
+            return ColdStartPredictResponse(
+                drug_code=drug.drug_code,
+                stage_used=stage,
+                observation_count=observation_count,
+                embedding=embedding,
+                nearest_neighbours=[code for code, _ in neighbours],
+                similarity_scores=[score for _, score in neighbours],
+                forecast=[],
+                uncertainty_note=(
+                    "This drug has sufficient history. Route to full SHIELD-XR forecasting ensemble."
+                ),
+                conformal_half_width_weekly=artifacts.conformal_half_width,
+            )
+
+        observed_weeks = load_weekly_series_for_drug(self.db, drug.drug_code)
+        observed_for_cameo = observed_weeks[: min(len(observed_weeks), horizon_weeks)]
+        drift_alarms = 0
+
+        if len(observed_for_cameo) >= COLD_START_ONLY_BELOW:
+            weekly_forecast, drift_flags = run_cameo(
+                new_attr_scaled,
+                hist_embeds,
+                hist_series,
+                artifacts.metric_net,
+                observed_for_cameo,
+                topk=artifacts.topk,
+            )
+            drift_alarms = int(sum(drift_flags))
+            if len(weekly_forecast) < horizon_weeks:
+                tail_level = weekly_forecast[-1] if len(weekly_forecast) else init.init_level
+                tail = np.full(horizon_weeks - len(weekly_forecast), tail_level)
+                weekly_forecast = np.concatenate([weekly_forecast, tail])
+            else:
+                weekly_forecast = weekly_forecast[:horizon_weeks]
         else:
-            forecast = baseline
+            weekly_forecast, _ = forecast_cold_start_weeks(
+                new_attr_scaled,
+                hist_embeds,
+                hist_series,
+                artifacts.metric_net,
+                horizon_weeks=horizon_weeks,
+                observed_weeks=None,
+                topk=artifacts.topk,
+            )
+
+        if request.pharmacist_estimate is not None:
+            weekly_forecast = _apply_pharmacist_blend(
+                weekly_forecast,
+                request.pharmacist_estimate.weekly_units,
+                request.pharmacist_estimate.confidence,
+            )
+
+        daily_forecast = _weekly_to_daily_forecast(
+            weekly_forecast,
+            horizon_days,
+            half_width_weekly=artifacts.conformal_half_width,
+        )
 
         return ColdStartPredictResponse(
             drug_code=drug.drug_code,
@@ -152,10 +217,8 @@ class ColdStartService:
             embedding=embedding,
             nearest_neighbours=[code for code, _ in neighbours],
             similarity_scores=[score for _, score in neighbours],
-            forecast=forecast,
-            uncertainty_note=_build_uncertainty_note(
-                stage,
-                observation_count,
-                len(neighbours),
-            ),
+            forecast=daily_forecast,
+            uncertainty_note=_build_uncertainty_note(stage, observation_count, len(neighbours)),
+            conformal_half_width_weekly=artifacts.conformal_half_width,
+            drift_alarms=drift_alarms,
         )

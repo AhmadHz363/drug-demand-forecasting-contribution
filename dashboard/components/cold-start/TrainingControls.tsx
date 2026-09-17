@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { Brain, CheckCircle2, Loader2, Sparkles, XCircle } from "lucide-react";
 
 import { trainEmbedder, trainMaml } from "@/lib/api";
+import type { CameoAccuracySummary } from "@/lib/types";
 
 import { Panel, PanelBody, PanelHeader } from "./ui";
 
@@ -16,11 +17,23 @@ interface TrainState {
 
 const initialState: TrainState = { status: "idle", message: "" };
 
+export interface TrainingCompletePayload {
+  drugsTrained?: number;
+  accuracySummary?: CameoAccuracySummary | null;
+}
+
 interface TrainingControlsProps {
+  onModelReady?: (ready: boolean) => void;
+  onTrainComplete?: (payload: TrainingCompletePayload) => void;
+  /** @deprecated use onModelReady */
   onEmbedderReady?: (ready: boolean) => void;
 }
 
-export function TrainingControls({ onEmbedderReady }: TrainingControlsProps) {
+export function TrainingControls({
+  onModelReady,
+  onTrainComplete,
+  onEmbedderReady,
+}: TrainingControlsProps) {
   const controlsRef = useRef<HTMLDivElement>(null);
   const [embedder, setEmbedder] = useState<TrainState>(initialState);
   const [maml, setMaml] = useState<TrainState>(initialState);
@@ -44,7 +57,12 @@ export function TrainingControls({ onEmbedderReady }: TrainingControlsProps) {
           message: `Ready — trained on ${count ?? 0} ${label}`,
         });
         if (kind === "embedder") {
+          onModelReady?.(true);
           onEmbedderReady?.(true);
+          onTrainComplete?.({
+            drugsTrained: result.drugs_trained_on,
+            accuracySummary: result.accuracy_summary,
+          });
         }
       } catch (err) {
         setState({
@@ -53,36 +71,36 @@ export function TrainingControls({ onEmbedderReady }: TrainingControlsProps) {
         });
       }
     },
-    [onEmbedderReady],
+    [onEmbedderReady, onModelReady, onTrainComplete],
   );
 
   return (
     <Panel id="training-controls">
       <PanelHeader
         step={1}
-        title="Model setup"
-        description="Train the embedder first (required). MAML is optional — needed only for blended and full-ensemble stages."
+        title="CAMEO model setup"
+        description="Train the metric-learning cold-start model on matched-source drugs from the drugs table."
       />
       <PanelBody>
         <div ref={controlsRef} className="grid gap-4 sm:grid-cols-2">
           <TrainCard
             icon={<Brain className="h-5 w-5 text-blue-600" />}
-            title="Drug embedder"
-            description="Learns 32-dim fingerprints from catalog metadata. Required before any prediction."
+            title="CAMEO library"
+            description="Trains Module A (metric net) on real matched-source attributes + weekly demand shapes. Required before prediction."
             badge="Required"
             badgeColor="red"
-            buttonLabel="Train embedder"
+            buttonLabel="Train CAMEO"
             state={embedder}
             disabled={isBusy}
             onClick={() => runTrain("embedder")}
           />
           <TrainCard
             icon={<Sparkles className="h-5 w-5 text-violet-600" />}
-            title="MAML adapter"
-            description="Enables fast adaptation after 4+ real observations. Skip if testing cold-start only."
+            title="Retrain (optional)"
+            description="Re-run after updating the drugs Excel import or enriched demand panel."
             badge="Optional"
             badgeColor="slate"
-            buttonLabel="Train MAML"
+            buttonLabel="Retrain CAMEO"
             state={maml}
             disabled={isBusy}
             onClick={() => runTrain("maml")}

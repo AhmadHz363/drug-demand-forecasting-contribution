@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from app.cold_start.cameo.panel import count_observation_days
 from app.cold_start.constants import BLEND_UNTIL, COLD_START_ONLY_BELOW
-from app.services.demand_aggregation import count_distinct_receipt_days
 
 
 def get_observation_count(drug_code: str, db_session: Session) -> int:
-    """Return distinct receipt days with demand history for this drug."""
-    return count_distinct_receipt_days(db_session, drug_code)
+    """Return distinct days with positive demand in the enriched hospital panel."""
+    return count_observation_days(db_session, drug_code)
 
 
 def decide_stage(observation_count: int) -> str:
