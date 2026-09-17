@@ -76,10 +76,30 @@ def select_sarima_train_days(
     *,
     cv2: Optional[float] = None,
 ) -> int:
-    """Prefer shorter windows for intermittent/lumpy or high-CV² series."""
-    use_short = demand_segment in {"intermittent", "lumpy"} or (
-        cv2 is not None and cv2 > CV2_THRESHOLD
-    )
+    """
+    Prefer shorter windows for intermittent/lumpy or high-CV² series.
+    Smooth series limited to 1 year to avoid over-fitting on old data.
+    """
+    # Smooth series: max 1 year (365 days)
+    # Recent patterns more reliable than very old data for stable demand
+    if demand_segment == "smooth":
+        limit = min(365, SARIMA_TRAIN_DAYS)
+        return min(limit, series_length)
+    
+    # Intermittent/lumpy: can use up to 2 years
+    # Need more history to capture rare demand events
+    if demand_segment in {"intermittent", "lumpy"}:
+        use_short = cv2 is not None and cv2 > CV2_THRESHOLD
+        limit = SARIMA_TRAIN_DAYS_SHORT if use_short else SARIMA_TRAIN_DAYS
+        return min(limit, series_length)
+    
+    # Erratic: middle ground (1.5 years max)
+    if demand_segment == "erratic":
+        limit = min(545, SARIMA_TRAIN_DAYS)  # ~1.5 years
+        return min(limit, series_length)
+    
+    # Fallback: use constants
+    use_short = cv2 is not None and cv2 > CV2_THRESHOLD
     limit = SARIMA_TRAIN_DAYS_SHORT if use_short else SARIMA_TRAIN_DAYS
     return min(limit, series_length)
 
@@ -87,18 +107,19 @@ def select_sarima_train_days(
 def lgbm_training_params(demand_segment: str) -> dict[str, int | float]:
     """Stronger regularization for sparse intermittent/lumpy demand."""
     if demand_segment in {"intermittent", "lumpy"}:
+        # Slightly relaxed regularization to capture more patterns
         return {
-            "num_leaves": 15,
-            "max_depth": 4,
-            "n_estimators": 300,
+            "num_leaves": 20,
+            "max_depth": 5,
+            "n_estimators": 400,
             "learning_rate": LGBM_LEARNING_RATE,
             "early_stopping_rounds": LGBM_EARLY_STOPPING_ROUNDS,
         }
     if demand_segment == "erratic":
         return {
-            "num_leaves": 23,
+            "num_leaves": 26,
             "max_depth": 5,
-            "n_estimators": 400,
+            "n_estimators": 450,
             "learning_rate": LGBM_LEARNING_RATE,
             "early_stopping_rounds": LGBM_EARLY_STOPPING_ROUNDS,
         }
@@ -186,7 +207,7 @@ def build_stacking_meta_features(
     demand_segment: str,
     history_days: int | np.ndarray,
     recent_cv2: float | np.ndarray,
-    tft_available: bool,
+    classical_available: bool,
     horizon_steps: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Meta-features for conditional Ridge stacking."""
@@ -211,7 +232,7 @@ def build_stacking_meta_features(
             min(float(recent_cv2) / max(CV2_THRESHOLD, 1e-6), 3.0) / 3.0,
         )
 
-    tft_flag = np.full(n_samples, 1.0 if tft_available else 0.0)
+    classical_flag = np.full(n_samples, 1.0 if classical_available else 0.0)
     if horizon_steps is None:
         step_norm = np.full(n_samples, 0.5)
     else:
@@ -225,7 +246,7 @@ def build_stacking_meta_features(
             np.full(n_samples, segment_code),
             history_norm,
             cv2_norm,
-            tft_flag,
+            classical_flag,
             step_norm,
         ]
     )

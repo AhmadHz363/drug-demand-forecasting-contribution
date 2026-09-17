@@ -1,0 +1,412 @@
+{
+  "captured_at": "2026-07-13T13:19:59.037666+00:00",
+  "note": "Baseline before movement-aware demand + date-parse fixes",
+  "receipts": {
+    "n": 1422187,
+    "drugs": 968,
+    "min_d": "2023-01-01",
+    "max_d": "2024-12-31"
+  },
+  "model_performance_sample": [
+    {
+      "drug_code": "P406816",
+      "model_name": "classical",
+      "smape": 53.3768,
+      "mase": 1.8477,
+      "coverage_90": 0.5714,
+      "evaluated_at": "2026-07-11T03:42:29.244595+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P406816",
+      "model_name": "sarima",
+      "smape": 44.3386,
+      "mase": 1.4898,
+      "coverage_90": 0.7429,
+      "evaluated_at": "2026-07-11T03:42:29.244595+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P406816",
+      "model_name": "lgbm",
+      "smape": 43.7879,
+      "mase": 1.5594,
+      "coverage_90": 0.2571,
+      "evaluated_at": "2026-07-11T03:42:29.244595+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P406816",
+      "model_name": "lgbm",
+      "smape": 43.7879,
+      "mase": 1.5594,
+      "coverage_90": 0.2571,
+      "evaluated_at": "2026-07-11T03:41:23.650001+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P406816",
+      "model_name": "lgbm",
+      "smape": 43.7879,
+      "mase": 1.5594,
+      "coverage_90": 0.2571,
+      "evaluated_at": "2026-07-11T03:40:52.132612+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P406816",
+      "model_name": "lgbm",
+      "smape": 43.7879,
+      "mase": 1.5594,
+      "coverage_90": 0.2571,
+      "evaluated_at": "2026-07-11T03:39:21.280340+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P406816",
+      "model_name": "sarima",
+      "smape": 44.3386,
+      "mase": 1.4898,
+      "coverage_90": 0.7429,
+      "evaluated_at": "2026-07-11T03:38:41.863518+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P406816",
+      "model_name": "lgbm",
+      "smape": 43.7879,
+      "mase": 1.5594,
+      "coverage_90": 0.2571,
+      "evaluated_at": "2026-07-11T03:38:41.863518+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P406816",
+      "model_name": "classical",
+      "smape": 53.3768,
+      "mase": 1.8477,
+      "coverage_90": 0.5714,
+      "evaluated_at": "2026-07-11T03:38:41.863518+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P406816",
+      "model_name": "sarima",
+      "smape": 44.3386,
+      "mase": 1.4898,
+      "coverage_90": 0.7429,
+      "evaluated_at": "2026-07-11T03:13:24.423315+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P406816",
+      "model_name": "lgbm",
+      "smape": 43.7879,
+      "mase": 1.5594,
+      "coverage_90": 0.2571,
+      "evaluated_at": "2026-07-11T03:13:24.423315+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P406816",
+      "model_name": "classical",
+      "smape": 53.3768,
+      "mase": 1.8477,
+      "coverage_90": 0.5714,
+      "evaluated_at": "2026-07-11T03:13:24.423315+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P926260",
+      "model_name": "classical",
+      "smape": 51.2649,
+      "mase": 1.139,
+      "coverage_90": 0.8286,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P926260",
+      "model_name": "lgbm",
+      "smape": 50.7247,
+      "mase": 1.1452,
+      "coverage_90": 0.0857,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P926260",
+      "model_name": "sarima",
+      "smape": 59.3859,
+      "mase": 1.3328,
+      "coverage_90": 0.6571,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P877629",
+      "model_name": "classical",
+      "smape": 41.2463,
+      "mase": 0.5148,
+      "coverage_90": 0.9143,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "smooth",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P877629",
+      "model_name": "lgbm",
+      "smape": 43.7936,
+      "mase": 0.489,
+      "coverage_90": 0.2857,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "smooth",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P877629",
+      "model_name": "sarima",
+      "smape": 50.0674,
+      "mase": 0.5757,
+      "coverage_90": 0.8,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "smooth",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P787878",
+      "model_name": "classical",
+      "smape": 54.6185,
+      "mase": 1.1485,
+      "coverage_90": 0.7143,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P787878",
+      "model_name": "lgbm",
+      "smape": 48.7064,
+      "mase": 1.136,
+      "coverage_90": 0.2286,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P787878",
+      "model_name": "sarima",
+      "smape": 51.6693,
+      "mase": 1.1186,
+      "coverage_90": 0.5429,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P767676",
+      "model_name": "classical",
+      "smape": 113.2431,
+      "mase": 5.6508,
+      "coverage_90": 0.4857,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "lumpy",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P767676",
+      "model_name": "lgbm",
+      "smape": 96.047,
+      "mase": 4.1423,
+      "coverage_90": 0.4,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "lumpy",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P767676",
+      "model_name": "sarima",
+      "smape": 108.8688,
+      "mase": 5.5452,
+      "coverage_90": 0.4,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "lumpy",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P753286",
+      "model_name": "classical",
+      "smape": 72.4855,
+      "mase": 0.9792,
+      "coverage_90": 0.7714,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P753286",
+      "model_name": "lgbm",
+      "smape": 73.4091,
+      "mase": 0.9567,
+      "coverage_90": 0.4286,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P753286",
+      "model_name": "sarima",
+      "smape": 78.8711,
+      "mase": 1.1378,
+      "coverage_90": 0.6857,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "erratic",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P753273",
+      "model_name": "classical",
+      "smape": 56.8932,
+      "mase": 1.069,
+      "coverage_90": 0.7429,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "smooth",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P753273",
+      "model_name": "lgbm",
+      "smape": 67.2911,
+      "mase": 1.2707,
+      "coverage_90": 0.3714,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "smooth",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P753273",
+      "model_name": "sarima",
+      "smape": 58.3995,
+      "mase": 1.02,
+      "coverage_90": 0.7429,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "smooth",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P753092",
+      "model_name": "classical",
+      "smape": 52.4018,
+      "mase": 1.0316,
+      "coverage_90": 0.6857,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "smooth",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P753092",
+      "model_name": "lgbm",
+      "smape": 51.7675,
+      "mase": 1.01,
+      "coverage_90": 0.2,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "smooth",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P753092",
+      "model_name": "sarima",
+      "smape": 51.6696,
+      "mase": 1.0147,
+      "coverage_90": 0.4286,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "smooth",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P733377",
+      "model_name": "classical",
+      "smape": 46.1707,
+      "mase": 0.981,
+      "coverage_90": 0.7429,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "smooth",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P733377",
+      "model_name": "lgbm",
+      "smape": 44.302,
+      "mase": 0.9509,
+      "coverage_90": 0.3714,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "smooth",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P733377",
+      "model_name": "sarima",
+      "smape": 47.3227,
+      "mase": 0.9986,
+      "coverage_90": 0.5429,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "smooth",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P733156",
+      "model_name": "classical",
+      "smape": 55.1834,
+      "mase": 1.0064,
+      "coverage_90": 0.8571,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "lumpy",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P733156",
+      "model_name": "lgbm",
+      "smape": 56.0114,
+      "mase": 1.0389,
+      "coverage_90": 0.0857,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "lumpy",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P733156",
+      "model_name": "sarima",
+      "smape": 52.9794,
+      "mase": 0.9465,
+      "coverage_90": 0.7143,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "lumpy",
+      "data_quality_status": "ok"
+    },
+    {
+      "drug_code": "P733065",
+      "model_name": "classical",
+      "smape": 72.7408,
+      "mase": 1.5391,
+      "coverage_90": 0.5429,
+      "evaluated_at": "2026-07-11T02:49:45.667623+03:00",
+      "demand_segment": "smooth",
+      "data_quality_status": "ok"
+    }
+  ]
+}

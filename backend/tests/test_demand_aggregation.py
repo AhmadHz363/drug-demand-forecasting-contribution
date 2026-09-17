@@ -135,6 +135,46 @@ class TestDemandAggregation:
         assert start == date(2024, 2, 1)
         assert end == date(2024, 2, 2)
 
+    def test_patient_movements_exclude_transfers(self, agg_db):
+        insert_receipt_rows(
+            agg_db,
+            [
+                {
+                    "receipt_id": "r1",
+                    "line_count": 1,
+                    "movement_number": "5",
+                    "drug_code": TEST_DRUG,
+                    "receipt_date": date(2024, 5, 1),
+                    "quantity": 10.0,  # sale
+                },
+                {
+                    "receipt_id": "r1",
+                    "line_count": 2,
+                    "movement_number": "6",
+                    "drug_code": TEST_DRUG,
+                    "receipt_date": date(2024, 5, 1),
+                    "quantity": 3.0,  # return
+                },
+                {
+                    "receipt_id": "r2",
+                    "line_count": 1,
+                    "movement_number": "2",
+                    "drug_code": TEST_DRUG,
+                    "receipt_date": date(2024, 5, 1),
+                    "quantity": 500.0,  # transfer — excluded
+                },
+            ],
+        )
+        agg_db.commit()
+
+        rows = aggregate_daily_demand_rows(
+            agg_db,
+            TEST_DRUG,
+            date(2024, 5, 1),
+            date(2024, 5, 1),
+        )
+        assert rows == [(date(2024, 5, 1), 7.0)]
+
     def test_distinct_drug_codes_from_receipts(self, agg_db):
         insert_receipt_rows(
             agg_db,

@@ -31,7 +31,7 @@ def _sample_response(drug_code: str = "drug-a", horizon_days: int = 7) -> Foreca
         drug_code=drug_code,
         center_syn_id=None,
         horizon_days=horizon_days,
-        model_weights=ModelWeightBreakdown(sarima=0.4, lgbm=0.6, tft=0.0),
+        model_weights=ModelWeightBreakdown(sarima=0.4, lgbm=0.6, classical=0.0),
         forecast=[
             DailyForecastPoint(
                 date=date(2024, 1, idx),
@@ -60,7 +60,7 @@ class TestValidateForecastQuantiles:
 
     def test_rejects_weights_not_summing_to_one(self):
         bad = _sample_response()
-        bad.model_weights = ModelWeightBreakdown(sarima=0.3, lgbm=0.3, tft=0.3)
+        bad.model_weights = ModelWeightBreakdown(sarima=0.3, lgbm=0.3, classical=0.3)
         with pytest.raises(ValueError, match="Model weights must sum to 1.0"):
             validate_forecast_quantiles(bad)
 
@@ -153,15 +153,18 @@ class TestDrugForecasterEnsemble:
         model_preds = {
             "sarima": np.array([10.0, 12.0]),
             "lgbm": np.array([14.0, 16.0]),
-            "tft": np.array([np.nan, np.nan]),
+            "classical": np.array([np.nan, np.nan]),
         }
-        p5, p10, p50, p90, p95, weights = forecaster._ensemble_forecast(
+        p5, p10, p50, p90, p95, weights, _health = forecaster._ensemble_forecast(
             model_preds,
             2,
             prediction_cap=100.0,
             demand_segment="smooth",
+            history_days=120,
+            drug_cv2=0.2,
+            classical_available=False,
         )
 
         assert len(p50) == 2
-        assert weights.sarima + weights.lgbm + weights.tft == pytest.approx(1.0)
+        assert weights.sarima + weights.lgbm + weights.classical == pytest.approx(1.0)
         assert p5[0] <= p10[0] <= p50[0] <= p90[0] <= p95[0]

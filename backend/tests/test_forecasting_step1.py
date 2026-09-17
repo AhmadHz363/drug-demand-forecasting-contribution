@@ -42,7 +42,7 @@ FORECAST_RESULT_COLUMNS = {
     "p95",
     "model_weight_sarima",
     "model_weight_lgbm",
-    "model_weight_tft",
+    "model_weight_classical",
 }
 
 MODEL_PERFORMANCE_COLUMNS = {
@@ -58,10 +58,10 @@ MODEL_PERFORMANCE_COLUMNS = {
     "data_quality_status",
     "weight_sarima",
     "weight_lgbm",
-    "weight_tft",
+    "weight_classical",
 }
 
-ARTIFACT_SUBDIRS = ("sarima", "lgbm", "tft", "stacking", "conformal")
+ARTIFACT_SUBDIRS = ("sarima", "lgbm", "classical", "stacking", "conformal")
 
 
 def _db_available() -> bool:
@@ -104,7 +104,7 @@ class TestForecastingSchemas:
     def test_train_request_defaults(self):
         req = TrainForecastingRequest()
         assert req.drug_codes is None
-        assert req.models == ["sarima", "lgbm", "tft"]
+        assert req.models == ["sarima", "lgbm", "classical"]
         assert req.force_retrain is False
 
 
@@ -130,7 +130,7 @@ class TestForecastingDatabaseIntegration:
     def test_alembic_at_head(self):
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "20260506_0004"
+        assert version == "20260713_0010"
 
     def test_stockout_flags_table_schema(self):
         cols = {c["name"] for c in inspect(engine).get_columns("stockout_flags")}

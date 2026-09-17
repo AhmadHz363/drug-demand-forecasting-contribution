@@ -87,7 +87,7 @@ def search_db():
                 "p90": 3.0,
                 "model_weight_sarima": 0.3,
                 "model_weight_lgbm": 0.7,
-                "model_weight_tft": 0.0,
+                "model_weight_classical": 0.0,
             },
             {
                 "drug_code": "SEARCH-ABC",
@@ -99,7 +99,7 @@ def search_db():
                 "p90": 6.0,
                 "model_weight_sarima": 0.2,
                 "model_weight_lgbm": 0.8,
-                "model_weight_tft": 0.0,
+                "model_weight_classical": 0.0,
             },
         ],
     )

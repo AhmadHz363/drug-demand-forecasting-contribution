@@ -21,32 +21,49 @@ def add_supplier_features(
     drug_code: str,
     db_session: Session,
 ) -> pd.DataFrame:
-    """Append constant supplier lead-time features for the drug."""
+    """Append supplier lead-time features for the drug.
+
+    When no ``supplier_lead_times`` row exists, values are NaN with
+    ``supplier_features_is_default=1`` so models omit fake constants.
+    """
     out = df.copy()
 
-    row = (
-        db_session.query(SupplierLeadTime)
-        .filter(SupplierLeadTime.drug_code == drug_code)
-        .first()
-    )
+    try:
+        row = (
+            db_session.query(SupplierLeadTime)
+            .filter(SupplierLeadTime.drug_code == drug_code)
+            .first()
+        )
+    except Exception as exc:  # noqa: BLE001 — table may be missing
+        logger.warning("supplier_lead_times unavailable (%s) — omitting supplier features", exc)
+        try:
+            db_session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        out["supplier_avg_lead_time"] = float("nan")
+        out["supplier_lead_time_std"] = float("nan")
+        out["supplier_reliability_score"] = float("nan")
+        out["supplier_features_is_default"] = 1
+        out["has_supplier"] = 0
+        return out
 
     if row is None:
         logger.warning(
-            "No supplier_lead_times row for drug %s — using default supplier feature values",
+            "No supplier_lead_times row for drug %s — omitting default supplier features",
             drug_code,
         )
-        avg_lead = DEFAULT_AVG_LEAD_TIME
-        std_lead = DEFAULT_LEAD_TIME_STD
-        reliability = DEFAULT_RELIABILITY
-    else:
-        avg_lead = float(row.avg_lead_time_days)
-        std_lead = float(row.lead_time_std_days)
-        reliability = float(row.reliability_score)
+        out["supplier_avg_lead_time"] = float("nan")
+        out["supplier_lead_time_std"] = float("nan")
+        out["supplier_reliability_score"] = float("nan")
+        out["supplier_features_is_default"] = 1
+        out["has_supplier"] = 0
+        return out
 
-    out["supplier_avg_lead_time"] = avg_lead
-    out["supplier_lead_time_std"] = std_lead
-    out["supplier_reliability_score"] = reliability
-    out["supplier_features_is_default"] = 0 if row is not None else 1
+    out["supplier_avg_lead_time"] = float(row.avg_lead_time_days)
+    out["supplier_lead_time_std"] = float(row.lead_time_std_days)
+    out["supplier_reliability_score"] = float(row.reliability_score)
+    out["supplier_features_is_default"] = 0
+    out["has_supplier"] = 1
     return out
 
 

@@ -27,11 +27,18 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
     Append rolling statistics to a DataFrame sorted by ``demand_date``.
 
     Requires columns: total_quantity
+    Rolling windows reset across coverage gaps (gap days treated as NaN).
     """
     out = df.copy()
-    series = out["total_quantity"]
-    median_qty = float(series.median())
-    # Preceding rows only (no same-day leakage).
+    covered = (
+        out["is_coverage_gap"].astype(int) == 0
+        if "is_coverage_gap" in out.columns
+        else pd.Series(True, index=out.index)
+    )
+    series = out["total_quantity"].astype(float).where(covered)
+    covered_vals = series.dropna()
+    median_qty = float(covered_vals.median()) if not covered_vals.empty else 0.0
+    # Preceding rows only (no same-day leakage); NaNs break windows at gaps.
     preceding = series.shift(1)
 
     for window in ROLLING_WINDOWS:
@@ -59,7 +66,7 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     std_28 = out["rolling_std_28d"].replace(0, np.nan)
-    out["demand_zscore_28d"] = ((series - out["rolling_mean_28d"]) / std_28).fillna(0.0)
+    out["demand_zscore_28d"] = ((series.fillna(median_qty) - out["rolling_mean_28d"]) / std_28).fillna(0.0)
 
     for window in ROLLING_WINDOWS:
         rolling_mean = preceding.rolling(window=window, min_periods=7).mean()

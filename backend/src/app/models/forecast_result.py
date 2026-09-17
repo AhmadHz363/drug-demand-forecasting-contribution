@@ -41,4 +41,4 @@ class ForecastResult(Base):
     p95: Mapped[Optional[float]] = mapped_column(Numeric(18, 4), nullable=True)
     model_weight_sarima: Mapped[float] = mapped_column(Numeric(6, 4), nullable=False)
     model_weight_lgbm: Mapped[float] = mapped_column(Numeric(6, 4), nullable=False)
-    model_weight_tft: Mapped[float] = mapped_column(Numeric(6, 4), nullable=False)
+    model_weight_classical: Mapped[float] = mapped_column(Numeric(6, 4), nullable=False)

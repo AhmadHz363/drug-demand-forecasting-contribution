@@ -236,42 +236,21 @@ class TestWeibullImputationCap:
         assert float(imputed.min()) >= 0.0
 
 
-# ── Fix 4: Walk-forward TFT epoch budget ───────────────────────────────────
+# ── Fix 4: Walk-forward classical training (no TFT epoch shortcuts) ──────────
 
 
-class TestWalkForwardTFTEpochs:
-    def test_walk_forward_epochs_respect_max_cap(self, monkeypatch):
-        """_walk_forward_tft_epochs() must never exceed TFT_WALK_FORWARD_MAX_EPOCHS."""
-        import app.forecasting.training.walk_forward as wf_mod
-        import app.forecasting.constants as const_mod
+class TestWalkForwardClassicalTraining:
+    def test_classical_fold_training_has_no_epoch_override(self):
+        """Classical walk-forward folds train like SARIMA — plain train() only."""
+        from unittest.mock import MagicMock
 
-        monkeypatch.setattr(const_mod, "TFT_MAX_EPOCHS", 50)
-        monkeypatch.setattr(const_mod, "TFT_WALK_FORWARD_EPOCH_RATIO", 0.20)
-        monkeypatch.setattr(const_mod, "TFT_WALK_FORWARD_MAX_EPOCHS", 5)
-        monkeypatch.setattr(wf_mod, "TFT_MAX_EPOCHS", 50)
-        monkeypatch.setattr(wf_mod, "TFT_WALK_FORWARD_EPOCH_RATIO", 0.20)
-        monkeypatch.setattr(wf_mod, "TFT_WALK_FORWARD_MAX_EPOCHS", 5)
+        from app.forecasting.models.classical_model import ClassicalModel
+        from app.forecasting.training.walk_forward import _train_fold_model
 
-        result = wf_mod._walk_forward_tft_epochs()
-        assert result <= 5, (
-            f"Expected at most 5 epochs (TFT_WALK_FORWARD_MAX_EPOCHS) but got {result}"
-        )
-
-    def test_walk_forward_epochs_constant_is_5(self):
-        """Ensure the constant itself matches the documented value."""
-        from app.forecasting.constants import TFT_WALK_FORWARD_MAX_EPOCHS
-
-        assert TFT_WALK_FORWARD_MAX_EPOCHS == 5, (
-            f"TFT_WALK_FORWARD_MAX_EPOCHS should be 5 (documented), got {TFT_WALK_FORWARD_MAX_EPOCHS}"
-        )
-
-    def test_walk_forward_epochs_bounded_by_constant(self):
-        """Result is always ≤ TFT_WALK_FORWARD_MAX_EPOCHS regardless of ratio."""
-        from app.forecasting.training.walk_forward import _walk_forward_tft_epochs
-        from app.forecasting.constants import TFT_WALK_FORWARD_MAX_EPOCHS
-
-        result = _walk_forward_tft_epochs()
-        assert result <= TFT_WALK_FORWARD_MAX_EPOCHS
+        fold_model = MagicMock(spec=ClassicalModel)
+        train_df = MagicMock()
+        _train_fold_model(fold_model, ClassicalModel, train_df, "drug-a")
+        fold_model.train.assert_called_once_with(train_df, "drug-a")
 
 
 # ── Fix 5: MPS accelerator selection ───────────────────────────────────────

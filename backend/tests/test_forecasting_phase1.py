@@ -64,6 +64,22 @@ class TestDemandSegmentation:
         assert cv2 > CV2_THRESHOLD
         assert classify_demand_segment(quantities) == "lumpy"
 
+    def test_burst_stockout_pattern_not_smooth(self):
+        """Multi-week near-zero stretches with bursts should not be smooth."""
+        quantities = np.zeros(120)
+        quantities[0:20] = 120.0
+        quantities[50:65] = 150.0
+        quantities[95:110] = 130.0
+        segment = classify_demand_segment(quantities)
+        assert segment in {"intermittent", "erratic", "lumpy"}
+
+    def test_weekly_dip_pattern_classified_erratic(self):
+        """Recurring intra-week dips should not be labeled smooth."""
+        quantities = np.full(84, 80.0)
+        quantities[::7] = 12.0
+        quantities[1::7] = 15.0
+        assert classify_demand_segment(quantities) == "erratic"
+
     def test_all_segments_defined(self):
         assert len(DEMAND_SEGMENTS) == 4
 
@@ -76,17 +92,17 @@ class TestSegmentEnsembleArtifacts:
             "app.forecasting.ensemble.segment_artifacts.ARTIFACTS_DIR",
             artifacts,
         )
-        actuals, sarima, lgbm, tft = _synthetic_predictions(120)
+        actuals, sarima, lgbm, classical = _synthetic_predictions(120)
         stacker = StackingMetaLearner(segment="intermittent")
-        stacker.fit(sarima, lgbm, tft, actuals)
+        stacker.fit(sarima, lgbm, classical, actuals)
         saved = stacker.save()
         assert saved == stacking_artifact_path("intermittent")
         assert os.path.isfile(saved)
 
         reloaded = StackingMetaLearner(segment="intermittent")
         reloaded.load()
-        in_blend, in_weights = stacker.predict(sarima[:5], lgbm[:5], tft[:5])
-        out_blend, out_weights = reloaded.predict(sarima[:5], lgbm[:5], tft[:5])
+        in_blend, in_weights = stacker.predict(sarima[:5], lgbm[:5], classical[:5])
+        out_blend, out_weights = reloaded.predict(sarima[:5], lgbm[:5], classical[:5])
         np.testing.assert_allclose(in_blend, out_blend)
         assert in_weights == out_weights
 
@@ -111,10 +127,10 @@ class TestSegmentEnsembleArtifacts:
             "app.forecasting.ensemble.segment_artifacts.ARTIFACTS_DIR",
             artifacts,
         )
-        actuals, sarima, lgbm, tft = _synthetic_predictions(180)
+        actuals, sarima, lgbm, classical = _synthetic_predictions(180)
         stacker = StackingMetaLearner(segment="smooth")
-        stacker.fit(sarima[:120], lgbm[:120], tft[:120], actuals[:120])
-        stacked, _ = stacker.predict(sarima[120:], lgbm[120:], tft[120:])
+        stacker.fit(sarima[:120], lgbm[:120], classical[:120], actuals[:120])
+        stacked, _ = stacker.predict(sarima[120:], lgbm[120:], classical[120:])
 
         calibrator = ConformalCalibrator(segment="smooth")
         cal_fit = stacked[:40]
@@ -162,5 +178,5 @@ def _synthetic_predictions(n: int, seed: int = 11) -> tuple[np.ndarray, ...]:
     actuals = rng.gamma(shape=2.0, scale=12.0, size=n)
     sarima = actuals + rng.normal(0, 4.0, size=n)
     lgbm = actuals + rng.normal(0, 3.0, size=n)
-    tft = actuals + rng.normal(0, 2.5, size=n)
-    return actuals, sarima, lgbm, tft
+    classical = actuals + rng.normal(0, 2.5, size=n)
+    return actuals, sarima, lgbm, classical

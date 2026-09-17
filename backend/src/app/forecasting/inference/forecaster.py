@@ -21,6 +21,8 @@ from app.forecasting.constants import (
     INTERVAL_P10_CLIFF_P50_THRESHOLD,
     INTERVAL_WIDTH_SHRINK_TOLERANCE,
     LGBM_LOOKBACK_WINDOW,
+    WALK_FORWARD_N_SPLITS,
+    WALK_FORWARD_TEST_HORIZON,
 )
 from app.forecasting.ensemble.conformal import (
     ConformalCalibrator,
@@ -32,15 +34,30 @@ from app.forecasting.ensemble.segment_artifacts import (
 )
 from app.forecasting.ensemble.stacking import StackingMetaLearner
 from app.forecasting.demand_segmentation import classify_demand_segment_from_frame
+from app.forecasting.evaluation_metrics import (
+    accuracy_skill_from_mase,
+    mase_beats_baseline,
+    primary_validation_metric_for_segment,
+    smape_unreliable_for_series,
+    validation_metrics_note,
+    zero_actual_fraction,
+)
+from app.forecasting.prediction_bounds import (
+    dampen_stacked_horizon_drift,
+    demand_prediction_cap,
+    sanitize_ensemble_predictions,
+)
 from app.forecasting.model_adaptation import recent_cv2
 from app.forecasting.feature_engineering.pipeline import (
     build_feature_matrix,
     build_future_covariates,
+    filter_covered_rows,
 )
 from app.forecasting.models.feature_columns import ensure_demand_date_index
+from app.forecasting.training.champion_selection import load_champion
+from app.forecasting.models.classical_model import ClassicalModel
 from app.forecasting.models.lgbm_model import LightGBMModel
 from app.forecasting.models.sarima_model import SarimaModel
-from app.forecasting.models.tft_model import TFTModel
 from app.forecasting.schemas import (
     AttentionWeight,
     DailyForecastPoint,
@@ -52,7 +69,6 @@ from app.forecasting.schemas import (
 )
 from app.forecasting.newsvendor import recommended_quantities, resolve_ven_class
 from app.forecasting.training.trainer import MODEL_REGISTRY
-from app.forecasting.prediction_bounds import demand_prediction_cap, sanitize_ensemble_predictions
 from app.models.forecast_result import ForecastResult
 from app.models.drug_catalog import DrugCatalog
 from app.models.model_performance import ModelPerformance
@@ -82,7 +98,7 @@ def validate_forecast_quantiles(response: ForecastResponse) -> None:
     total_weight = (
         response.model_weights.sarima
         + response.model_weights.lgbm
-        + response.model_weights.tft
+        + response.model_weights.classical
     )
     if abs(total_weight - 1.0) > 1e-5:
         raise ValueError(
@@ -186,26 +202,109 @@ class DrugForecaster:
         start_date = end_date - timedelta(days=LGBM_LOOKBACK_WINDOW - 1)
         return start_date, end_date
 
-    def _latest_smape(self, drug_code: str, db_session: Session) -> Optional[float]:
-        row = (
-            db_session.query(ModelPerformance)
-            .filter(
-                ModelPerformance.drug_code == drug_code,
-                ModelPerformance.model_name == "ensemble",
+    def _latest_validation_metrics(
+        self,
+        drug_code: str,
+        db_session: Session,
+        *,
+        preferred_model: Optional[str] = None,
+    ) -> dict[str, float | bool | None]:
+        query = db_session.query(ModelPerformance).filter(
+            ModelPerformance.drug_code == drug_code,
+        )
+        if preferred_model in {"sarima", "lgbm", "classical", "ensemble"}:
+            row = (
+                query.filter(ModelPerformance.model_name == preferred_model)
+                .order_by(desc(ModelPerformance.evaluated_at))
+                .first()
             )
-            .order_by(desc(ModelPerformance.evaluated_at))
-            .first()
-        )
-        if row is not None:
-            return float(row.smape)
+        else:
+            row = None
+        if row is None:
+            row = (
+                query.filter(ModelPerformance.model_name == "ensemble")
+                .order_by(desc(ModelPerformance.evaluated_at))
+                .first()
+            )
+        if row is None:
+            row = query.order_by(desc(ModelPerformance.evaluated_at)).first()
+        if row is None:
+            return {}
 
-        row = (
-            db_session.query(ModelPerformance)
-            .filter(ModelPerformance.drug_code == drug_code)
-            .order_by(desc(ModelPerformance.evaluated_at))
-            .first()
+        full_mase = float(row.mase) if row.mase is not None else None
+        full_smape = float(row.smape)
+        normal_mase = (
+            float(row.mase_normal_supply)
+            if row.mase_normal_supply is not None
+            else full_mase
         )
-        return float(row.smape) if row is not None else None
+        normal_smape = (
+            float(row.smape_normal_supply)
+            if row.smape_normal_supply is not None
+            else full_smape
+        )
+        return {
+            "full_smape": full_smape,
+            "full_mase": full_mase,
+            "normal_smape": normal_smape,
+            "normal_mase": normal_mase,
+            "mase_beats_baseline_full": mase_beats_baseline(full_mase),
+            "mase_beats_baseline_normal": mase_beats_baseline(normal_mase),
+            "mase_skill_full": (
+                accuracy_skill_from_mase(full_mase) if full_mase is not None else None
+            ),
+            "smape_7day_full": (
+                float(row.smape_7day_full) if row.smape_7day_full is not None else None
+            ),
+            "smape_30day_full": (
+                float(row.smape_30day_full) if row.smape_30day_full is not None else None
+            ),
+            "mase_7day_full": (
+                float(row.mase_7day_full) if row.mase_7day_full is not None else None
+            ),
+            "mase_30day_full": (
+                float(row.mase_30day_full) if row.mase_30day_full is not None else None
+            ),
+            "smape_7day_normal": (
+                float(row.smape_7day_normal)
+                if row.smape_7day_normal is not None
+                else (
+                    float(row.smape_7day_full)
+                    if row.smape_7day_full is not None
+                    else None
+                )
+            ),
+            "smape_30day_normal": (
+                float(row.smape_30day_normal)
+                if row.smape_30day_normal is not None
+                else (
+                    float(row.smape_30day_full)
+                    if row.smape_30day_full is not None
+                    else None
+                )
+            ),
+            "mase_7day_normal": (
+                float(row.mase_7day_normal)
+                if row.mase_7day_normal is not None
+                else (
+                    float(row.mase_7day_full) if row.mase_7day_full is not None else None
+                )
+            ),
+            "mase_30day_normal": (
+                float(row.mase_30day_normal)
+                if row.mase_30day_normal is not None
+                else (
+                    float(row.mase_30day_full)
+                    if row.mase_30day_full is not None
+                    else None
+                )
+            ),
+        }
+
+    def _latest_smape(self, drug_code: str, db_session: Session) -> Optional[float]:
+        metrics = self._latest_validation_metrics(drug_code, db_session)
+        full_smape = metrics.get("full_smape")
+        return float(full_smape) if full_smape is not None else None
 
     def _model_p50_predictions(
         self,
@@ -244,11 +343,11 @@ class DrugForecaster:
             )
             preds["lgbm"] = lgbm_df["p50"].astype(float).values
 
-        if "tft" in trained_models:
-            tft = TFTModel()
-            tft.load(drug_code)
-            tft_df = tft.predict(corrected_df, horizon_days)
-            preds["tft"] = tft_df["p50"].astype(float).values
+        if "classical" in trained_models:
+            classical = ClassicalModel()
+            classical.load(drug_code)
+            classical_df = classical.predict(corrected_df, horizon_days)
+            preds["classical"] = classical_df["p50"].astype(float).values
 
         for name in MODEL_REGISTRY:
             preds.setdefault(name, nan_array.copy())
@@ -259,10 +358,10 @@ class DrugForecaster:
         stacked: np.ndarray,
         sarima: np.ndarray,
         lgbm: np.ndarray,
-        tft: np.ndarray,
+        classical: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         p50 = stacked
-        spread = np.nanstd(np.column_stack([sarima, lgbm, tft]), axis=1)
+        spread = np.nanstd(np.column_stack([sarima, lgbm, classical]), axis=1)
         spread = np.where(np.isnan(spread) | (spread == 0), p50 * 0.2, spread)
         p10 = np.clip(p50 - spread, 0.0, None)
         p90 = p50 + spread
@@ -285,7 +384,9 @@ class DrugForecaster:
         demand_segment: str,
         history_days: int,
         drug_cv2: float,
-        tft_available: bool,
+        classical_available: bool,
+        champion: Optional[str] = None,
+        recent_level: float = 0.0,
     ) -> tuple[
         np.ndarray,
         np.ndarray,
@@ -297,33 +398,49 @@ class DrugForecaster:
     ]:
         sarima = model_preds["sarima"]
         lgbm = model_preds["lgbm"]
-        tft = model_preds["tft"]
+        classical = model_preds["classical"]
         horizon_steps = np.arange(1, horizon_days + 1, dtype=int)
 
-        sarima, lgbm, tft = sanitize_ensemble_predictions(sarima, lgbm, tft, prediction_cap)
+        sarima, lgbm, classical = sanitize_ensemble_predictions(sarima, lgbm, classical, prediction_cap)
 
         used_conformal = False
         used_spread_fallback = False
         used_stacking = False
 
-        stacking_path = resolve_stacking_path(demand_segment)
-        if stacking_path is not None:
+        if champion in {"sarima", "lgbm", "classical"}:
+            stacked = {
+                "sarima": sarima,
+                "lgbm": lgbm,
+                "classical": classical,
+            }[champion].copy()
+            weights = ModelWeightBreakdown(
+                sarima=1.0 if champion == "sarima" else 0.0,
+                lgbm=1.0 if champion == "lgbm" else 0.0,
+                classical=1.0 if champion == "classical" else 0.0,
+            )
+        elif resolve_stacking_path(demand_segment) is not None:
             used_stacking = True
             stacker = StackingMetaLearner(segment=demand_segment)
             stacker.load()
             stacked, weights = stacker.predict(
                 sarima,
                 lgbm,
-                tft,
+                classical,
                 prediction_cap=prediction_cap,
                 demand_segment=demand_segment,
                 history_days=history_days,
                 recent_cv2=drug_cv2,
-                tft_available=tft_available,
+                classical_available=classical_available,
+                horizon_steps=horizon_steps,
+            )
+            stacked = dampen_stacked_horizon_drift(
+                stacked,
+                demand_segment=demand_segment,
+                recent_level=recent_level,
                 horizon_steps=horizon_steps,
             )
         else:
-            available = np.column_stack([sarima, lgbm, tft])
+            available = np.column_stack([sarima, lgbm, classical])
             stacked = np.nanmean(available, axis=1)
             n_models = np.sum(~np.isnan(available), axis=1)
             stacked = np.where(n_models == 0, 0.0, stacked)
@@ -332,24 +449,26 @@ class DrugForecaster:
             weights = ModelWeightBreakdown(
                 sarima=float(active[0] / total_active) if active[0] else 0.0,
                 lgbm=float(active[1] / total_active) if active[1] else 0.0,
-                tft=float(active[2] / total_active) if active[2] else 0.0,
+                classical=float(active[2] / total_active) if active[2] else 0.0,
             )
-            if weights.tft == 0.0 and weights.sarima + weights.lgbm > 0:
+            if weights.classical == 0.0 and weights.sarima + weights.lgbm > 0:
                 total = weights.sarima + weights.lgbm
                 weights = ModelWeightBreakdown(
                     sarima=weights.sarima / total,
                     lgbm=weights.lgbm / total,
-                    tft=0.0,
+                    classical=0.0,
                 )
 
         if _conformal_available(demand_segment):
             try:
                 calibrator = ConformalCalibrator(segment=demand_segment)
                 calibrator.load()
+                champion_point = stacked.copy()
                 p50, p10, p90 = calibrator.predict_interval(
-                    stacked,
+                    champion_point,
                     horizon_steps=horizon_steps,
                 )
+                p50 = champion_point
                 used_conformal = True
             except (ValueError, RuntimeError, FileNotFoundError) as exc:
                 logger.warning(
@@ -358,10 +477,10 @@ class DrugForecaster:
                     demand_segment,
                     exc,
                 )
-                p50, p10, p90 = self._fallback_intervals(stacked, sarima, lgbm, tft)
+                p50, p10, p90 = self._fallback_intervals(stacked, sarima, lgbm, classical)
                 used_spread_fallback = True
         else:
-            p50, p10, p90 = self._fallback_intervals(stacked, sarima, lgbm, tft)
+            p50, p10, p90 = self._fallback_intervals(stacked, sarima, lgbm, classical)
             used_spread_fallback = True
 
         if used_spread_fallback:
@@ -488,15 +607,12 @@ class DrugForecaster:
 
     def _extract_attention_weights(
         self,
-        tft: TFTModel,
         corrected_df: pd.DataFrame,
         drug_code: str,
     ) -> Optional[list[AttentionWeight]]:
-        try:
-            return tft.extract_attention_weights(corrected_df, drug_code)
-        except Exception as exc:
-            logger.warning("TFT attention extraction failed for %s: %s", drug_code, exc)
-            return None
+        """Attention is deprecated — TFT no longer powers the active ensemble."""
+        del corrected_df, drug_code
+        return None
 
     def _persist_forecast_results(
         self,
@@ -526,7 +642,7 @@ class DrugForecaster:
                     p95=float(p95[idx]),
                     model_weight_sarima=weights.sarima,
                     model_weight_lgbm=weights.lgbm,
-                    model_weight_tft=weights.tft,
+                    model_weight_classical=weights.classical,
                 )
             )
         db_session.flush()
@@ -567,6 +683,7 @@ class DrugForecaster:
             db_session,
             feature_df,
         )
+        corrected_df = filter_covered_rows(corrected_df)
         corrected_df.attrs["drug_code"] = drug_code
         demand_segment = classify_demand_segment_from_frame(corrected_df)
         qty_col = (
@@ -575,6 +692,29 @@ class DrugForecaster:
             else "total_quantity"
         )
         drug_cv2 = recent_cv2(corrected_df[qty_col].astype(float).values)
+        champion = load_champion(drug_code, demand_segment)
+        qty_series = corrected_df[qty_col].astype(float)
+        recent_tail = qty_series.tail(28)
+        positive_recent = recent_tail[recent_tail > 0]
+        recent_level = (
+            float(np.median(positive_recent))
+            if not positive_recent.empty
+            else float(np.median(recent_tail)) if not recent_tail.empty else 0.0
+        )
+        validation_window = WALK_FORWARD_N_SPLITS * WALK_FORWARD_TEST_HORIZON
+        validation_zero_fraction = zero_actual_fraction(
+            qty_series.tail(validation_window).values,
+        )
+        smape_unreliable = smape_unreliable_for_series(
+            qty_series.tail(validation_window).values,
+            demand_segment=demand_segment,
+        )
+        primary_metric = primary_validation_metric_for_segment(demand_segment)
+        metrics_note = validation_metrics_note(
+            demand_segment=demand_segment,
+            zero_fraction=validation_zero_fraction,
+            smape_unreliable=smape_unreliable,
+        )
 
         model_preds = self._model_p50_predictions(
             corrected_df,
@@ -594,7 +734,10 @@ class DrugForecaster:
             demand_segment=demand_segment,
             history_days=len(corrected_df),
             drug_cv2=drug_cv2,
-            tft_available="tft" in trained_models and not np.all(np.isnan(model_preds["tft"])),
+            classical_available="classical" in trained_models
+            and not np.all(np.isnan(model_preds["classical"])),
+            champion=champion,
+            recent_level=recent_level,
         )
         forecast_dates = self._forecast_dates(corrected_df, horizon_days)
 
@@ -609,14 +752,8 @@ class DrugForecaster:
             shap_features = self._compute_shap_features(drug_code, lgbm, corrected_df)
 
         attention_weights: Optional[list[AttentionWeight]] = None
-        if include_attention and "tft" in trained_models:
-            tft = TFTModel()
-            tft.load(drug_code)
-            attention_weights = self._extract_attention_weights(
-                tft,
-                corrected_df,
-                drug_code,
-            )
+        if include_attention:
+            attention_weights = self._extract_attention_weights(corrected_df, drug_code)
 
         generated_at = datetime.now(timezone.utc)
         self._persist_forecast_results(
@@ -633,6 +770,12 @@ class DrugForecaster:
             generated_at,
         )
         db_session.commit()
+
+        validation = self._latest_validation_metrics(
+            drug_code,
+            db_session,
+            preferred_model=champion if champion in {"sarima", "lgbm", "classical"} else None,
+        )
 
         response = ForecastResponse(
             drug_code=drug_code,
@@ -655,11 +798,31 @@ class DrugForecaster:
             shap_features=shap_features,
             attention_weights=attention_weights,
             uncertainty_note=UNCERTAINTY_NOTE,
-            smape_last_validation=self._latest_smape(drug_code, db_session),
+            smape_last_validation=validation.get("full_smape"),
+            smape_validation_full_window=validation.get("full_smape"),
+            smape_validation_normal_supply=validation.get("normal_smape"),
+            mase_validation_full_window=validation.get("full_mase"),
+            mase_validation_normal_supply=validation.get("normal_mase"),
+            mase_beats_baseline_full_window=validation.get("mase_beats_baseline_full"),
+            mase_beats_baseline_normal_supply=validation.get("mase_beats_baseline_normal"),
+            mase_skill_validation_full_window=validation.get("mase_skill_full"),
+            smape_validation_7day_total=validation.get("smape_7day_full"),
+            smape_validation_30day_total=validation.get("smape_30day_full"),
+            mase_validation_7day_total=validation.get("mase_7day_full"),
+            mase_validation_30day_total=validation.get("mase_30day_full"),
+            smape_validation_7day_normal_supply=validation.get("smape_7day_normal"),
+            smape_validation_30day_normal_supply=validation.get("smape_30day_normal"),
+            mase_validation_7day_normal_supply=validation.get("mase_7day_normal"),
+            mase_validation_30day_normal_supply=validation.get("mase_30day_normal"),
             ven_class=ven_class,
             operating_quantile=op_quantile,
             recommended_quantity_total=recommended_total,
             inference_health=inference_health,
+            demand_segment=demand_segment,
+            validation_zero_actual_fraction=validation_zero_fraction,
+            smape_validation_unreliable=smape_unreliable,
+            primary_validation_metric=primary_metric,
+            validation_metrics_note=metrics_note,
         )
 
         for warning in check_forecast_interval_sanity(response):

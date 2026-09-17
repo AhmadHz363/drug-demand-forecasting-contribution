@@ -16,6 +16,7 @@ from app.forecasting.model_adaptation import clear_sarima_order_cache
 from app.forecasting.constants import (
     DEMAND_SEGMENTS,
     GLOBAL_DEMAND_SEGMENT,
+    MIN_DRUGS_FOR_CONFORMAL,
     MIN_HISTORY_DAYS_SARIMA,
     SEGMENT_ENSEMBLE_MIN_SAMPLES,
 )
@@ -26,15 +27,24 @@ from app.forecasting.data_quality import (
 )
 from app.forecasting.demand_segmentation import classify_demand_segment_from_frame
 from app.forecasting.drift_detection import assess_metric_drift
-from app.forecasting.evaluation_metrics import finite_mase_or_none
+from app.forecasting.evaluation_metrics import (
+    finite_mase_or_none,
+    mase as compute_mase,
+    mean_smape,
+    rolling_validation_metrics,
+    smape as smape_single,
+)
 from app.forecasting.model_adaptation import recent_cv2
 from app.forecasting.ensemble.conformal import ConformalCalibrator
 from app.forecasting.ensemble.stacking import StackingMetaLearner
-from app.forecasting.feature_engineering.pipeline import build_feature_matrix
+from app.forecasting.feature_engineering.pipeline import build_feature_matrix, filter_covered_rows
 from app.forecasting.models.base_model import BaseForecastingModel
+from app.forecasting.models.classical_model import ClassicalModel
 from app.forecasting.models.lgbm_model import LightGBMModel
 from app.forecasting.models.sarima_model import SarimaModel
-from app.forecasting.models.tft_model import TFTModel
+from app.forecasting.training.champion_selection import (
+    select_and_persist_champions,
+)
 from app.forecasting.schemas import DrugQualitySummary, TrainStatusResponse
 from app.forecasting.training.walk_forward import (
     WalkForwardResult,
@@ -52,7 +62,7 @@ logger = logging.getLogger(__name__)
 MODEL_REGISTRY: dict[str, type[BaseForecastingModel]] = {
     "sarima": SarimaModel,
     "lgbm": LightGBMModel,
-    "tft": TFTModel,
+    "classical": ClassicalModel,
 }
 
 
@@ -90,12 +100,21 @@ class ForecastingTrainer:
             start_date=start_date,
             end_date=end_date,
         )
-        return correct_demand(
+        corrected = correct_demand(
             drug_code,
             center_syn_id=None,
             db_session=db_session,
             feature_df=feature_df,
         )
+        # Training / segmentation / metrics use covered ledger days only.
+        covered = filter_covered_rows(corrected)
+        if covered.empty:
+            return corrected
+        # Preserve gap flag column as all zeros on the filtered frame.
+        if "is_coverage_gap" not in covered.columns:
+            covered = covered.copy()
+            covered["is_coverage_gap"] = 0
+        return covered
 
     def _train_single_model(
         self,
@@ -114,9 +133,6 @@ class ForecastingTrainer:
             return False, None, None, None, None, None
 
         model.train(corrected_df, drug_code)
-        if model_name == "tft" and getattr(model, "_skipped", False):
-            return False, None, None, None, None, None
-
         artifact_path = model.save(drug_code)
 
         # Single walk-forward pass replaces the previous 4 separate loops
@@ -134,13 +150,14 @@ class ForecastingTrainer:
         self,
         sarima_preds: np.ndarray,
         lgbm_preds: np.ndarray,
-        tft_preds: np.ndarray,
+        classical_preds: np.ndarray,
         actuals: np.ndarray,
         *,
         segment: str = GLOBAL_DEMAND_SEGMENT,
         history_days: Optional[np.ndarray] = None,
         recent_cv2_values: Optional[np.ndarray] = None,
         horizon_steps: Optional[np.ndarray] = None,
+        fit_conformal: bool = True,
     ) -> tuple[list[str], StackingMetaLearner, ConformalCalibrator]:
         artifacts_saved: list[str] = []
         n = len(actuals)
@@ -163,7 +180,7 @@ class ForecastingTrainer:
         stacker.fit(
             sarima_preds[:cal_start],
             lgbm_preds[:cal_start],
-            tft_preds[:cal_start],
+            classical_preds[:cal_start],
             actuals[:cal_start],
             demand_segment=segment if segment != GLOBAL_DEMAND_SEGMENT else "smooth",
             history_days=fit_history,
@@ -175,32 +192,34 @@ class ForecastingTrainer:
         cal_history = history_days[cal_start:] if history_days is not None else 365
         cal_cv2 = recent_cv2_values[cal_start:] if recent_cv2_values is not None else 0.0
         cal_steps = horizon_steps[cal_start:] if horizon_steps is not None else None
-        tft_available = not np.all(np.isnan(tft_preds[cal_start:]))
+        classical_available = not np.all(np.isnan(classical_preds[cal_start:]))
 
         stacked_cal, _ = stacker.predict(
             sarima_preds[cal_start:],
             lgbm_preds[cal_start:],
-            tft_preds[cal_start:],
+            classical_preds[cal_start:],
             demand_segment=segment if segment != GLOBAL_DEMAND_SEGMENT else "smooth",
             history_days=cal_history,
             recent_cv2=cal_cv2,
-            tft_available=tft_available,
+            classical_available=classical_available,
             horizon_steps=cal_steps,
         )
         calibrator = ConformalCalibrator(segment=segment)
-        calibrator.fit(stacked_cal, actuals[cal_start:], horizon_steps=cal_steps)
-        artifacts_saved.append(calibrator.save())
+        if fit_conformal:
+            calibrator.fit(stacked_cal, actuals[cal_start:], horizon_steps=cal_steps)
+            artifacts_saved.append(calibrator.save())
         return artifacts_saved, stacker, calibrator
 
     def _empty_segment_bucket(self) -> dict[str, list]:
         return {
             "sarima": [],
             "lgbm": [],
-            "tft": [],
+            "classical": [],
             "actuals": [],
             "horizon_steps": [],
             "history_days": [],
             "recent_cv2": [],
+            "drug_codes": [],
         }
 
     def _append_segment_predictions(
@@ -210,15 +229,17 @@ class ForecastingTrainer:
         *,
         history_days: int,
         drug_cv2: float,
+        drug_code: str,
     ) -> None:
         actuals = np.asarray(preds["actuals"], dtype=float)
         n_pts = len(actuals)
+        bucket["drug_codes"].append(drug_code)
         bucket["actuals"].extend(actuals.tolist())
         steps = np.asarray(preds.get("horizon_steps", np.arange(1, n_pts + 1)), dtype=int)
         bucket["horizon_steps"].extend(steps.tolist())
         bucket["history_days"].extend([history_days] * n_pts)
         bucket["recent_cv2"].extend([drug_cv2] * n_pts)
-        for name in ("sarima", "lgbm", "tft"):
+        for name in ("sarima", "lgbm", "classical"):
             values = np.asarray(preds.get(name, np.full(n_pts, np.nan)), dtype=float)
             bucket[name].extend(values.tolist())
 
@@ -245,7 +266,7 @@ class ForecastingTrainer:
         if unknown:
             logger.warning("Ignoring unknown model names: %s", ", ".join(unknown))
         if not valid_models:
-            raise ValueError("No valid models requested. Choose from: sarima, lgbm, tft.")
+            raise ValueError("No valid models requested. Choose from: sarima, lgbm, classical.")
 
         # Reset the per-drug SARIMA order cache so stale orders from a previous
         # training run don't bleed into the new one.
@@ -262,7 +283,7 @@ class ForecastingTrainer:
 
         all_sarima: list[float] = []
         all_lgbm: list[float] = []
-        all_tft: list[float] = []
+        all_classical: list[float] = []
         all_actuals: list[float] = []
         # Per-drug OOF results keyed {drug_code: {model_name: WalkForwardResult}}.
         # Used to build ensemble input without an extra walk-forward pass.
@@ -271,6 +292,7 @@ class ForecastingTrainer:
             GLOBAL_DEMAND_SEGMENT: self._empty_segment_bucket(),
             **{segment: self._empty_segment_bucket() for segment in DEMAND_SEGMENTS},
         }
+        segment_by_drug: dict[str, str] = {}
 
         for drug_code in drug_codes:
             per_drug_smape[drug_code] = {}
@@ -312,6 +334,7 @@ class ForecastingTrainer:
                     )
 
                 demand_segment = classify_demand_segment_from_frame(corrected_df)
+                segment_by_drug[drug_code] = demand_segment
                 logger.info(
                     "Demand segment for %s: %s",
                     drug_code,
@@ -359,6 +382,35 @@ class ForecastingTrainer:
                             .first()
                         )
                         stored_mase = finite_mase_or_none(mase)
+                        stored_mase_normal = (
+                            finite_mase_or_none(wf_result.mase_normal_supply)
+                            if wf_result is not None
+                            else None
+                        )
+                        stored_rolling: dict[str, float | None] = {}
+                        if wf_result is not None:
+                            for attr in (
+                                "smape_7day_full",
+                                "smape_30day_full",
+                                "mase_7day_full",
+                                "mase_30day_full",
+                                "smape_7day_normal",
+                                "smape_30day_normal",
+                                "mase_7day_normal",
+                                "mase_30day_normal",
+                            ):
+                                val = getattr(wf_result, attr, None)
+                                if val is not None and np.isfinite(val):
+                                    stored_rolling[attr] = float(val)
+                                else:
+                                    stored_rolling[attr] = None
+                        stored_smape_normal = (
+                            float(wf_result.smape_normal_supply)
+                            if wf_result is not None
+                            and wf_result.smape_normal_supply is not None
+                            and np.isfinite(wf_result.smape_normal_supply)
+                            else None
+                        )
                         drift = assess_metric_drift(
                             float(prev_row.smape) if prev_row else None,
                             float(smape),
@@ -380,8 +432,18 @@ class ForecastingTrainer:
                                 drug_code=drug_code,
                                 model_name=model_name,
                                 smape=float(smape),
+                                smape_normal_supply=stored_smape_normal,
                                 coverage_90=float(coverage or 0.0),
                                 mase=stored_mase,
+                                mase_normal_supply=stored_mase_normal,
+                                smape_7day_full=stored_rolling.get("smape_7day_full"),
+                                smape_30day_full=stored_rolling.get("smape_30day_full"),
+                                mase_7day_full=stored_rolling.get("mase_7day_full"),
+                                mase_30day_full=stored_rolling.get("mase_30day_full"),
+                                smape_7day_normal=stored_rolling.get("smape_7day_normal"),
+                                smape_30day_normal=stored_rolling.get("smape_30day_normal"),
+                                mase_7day_normal=stored_rolling.get("mase_7day_normal"),
+                                mase_30day_normal=stored_rolling.get("mase_30day_normal"),
                                 training_run_id=training_run_id,
                                 demand_segment=demand_segment,
                                 data_quality_status=quality.status,
@@ -437,12 +499,14 @@ class ForecastingTrainer:
                             preds,
                             history_days=history_len,
                             drug_cv2=drug_cv2,
+                            drug_code=drug_code,
                         )
                         self._append_segment_predictions(
                             segment_buckets[demand_segment],
                             preds,
                             history_days=history_len,
                             drug_cv2=drug_cv2,
+                            drug_code=drug_code,
                         )
                         actuals = np.asarray(preds["actuals"], dtype=float)
                         n_pts = len(actuals)
@@ -459,20 +523,25 @@ class ForecastingTrainer:
                                 dtype=float,
                             ).tolist()
                         )
-                        all_tft.extend(
+                        all_classical.extend(
                             np.asarray(
-                                preds.get("tft", np.full(n_pts, np.nan)),
+                                preds.get("classical", np.full(n_pts, np.nan)),
                                 dtype=float,
                             ).tolist()
                         )
 
             except Exception:
                 logger.exception("Failed processing drug %s", drug_code)
+                try:
+                    db_session.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
 
         ensemble_artifacts: list[str] = []
         segments_to_fit = [GLOBAL_DEMAND_SEGMENT, *DEMAND_SEGMENTS]
         for segment in segments_to_fit:
             bucket = segment_buckets[segment]
+            n_drugs = len(set(bucket["drug_codes"]))
             if len(bucket["actuals"]) < SEGMENT_ENSEMBLE_MIN_SAMPLES:
                 if segment != GLOBAL_DEMAND_SEGMENT:
                     logger.info(
@@ -486,11 +555,44 @@ class ForecastingTrainer:
                 if not bucket["actuals"]:
                     continue
 
+            if (
+                segment != GLOBAL_DEMAND_SEGMENT
+                and n_drugs < MIN_DRUGS_FOR_CONFORMAL
+            ):
+                logger.info(
+                    "Skipping segment '%s' conformal — only %d drugs contributed "
+                    "(<%d required); inference will use global conformal.",
+                    segment,
+                    n_drugs,
+                    MIN_DRUGS_FOR_CONFORMAL,
+                )
+                # Still fit stacking when sample count is sufficient; conformal
+                # for this segment is skipped inside _fit_ensemble below.
+                try:
+                    segment_artifacts, _, _ = self._fit_ensemble(
+                        np.asarray(bucket["sarima"], dtype=float),
+                        np.asarray(bucket["lgbm"], dtype=float),
+                        np.asarray(bucket["classical"], dtype=float),
+                        np.asarray(bucket["actuals"], dtype=float),
+                        segment=segment,
+                        history_days=np.asarray(bucket["history_days"], dtype=float),
+                        recent_cv2_values=np.asarray(bucket["recent_cv2"], dtype=float),
+                        horizon_steps=np.asarray(bucket["horizon_steps"], dtype=int),
+                        fit_conformal=False,
+                    )
+                    ensemble_artifacts.extend(segment_artifacts)
+                except Exception:
+                    logger.exception(
+                        "Ensemble fitting failed for segment '%s' — continuing",
+                        segment,
+                    )
+                continue
+
             try:
                 segment_artifacts, _, _ = self._fit_ensemble(
                     np.asarray(bucket["sarima"], dtype=float),
                     np.asarray(bucket["lgbm"], dtype=float),
-                    np.asarray(bucket["tft"], dtype=float),
+                    np.asarray(bucket["classical"], dtype=float),
                     np.asarray(bucket["actuals"], dtype=float),
                     segment=segment,
                     history_days=np.asarray(bucket["history_days"], dtype=float),
@@ -510,6 +612,112 @@ class ForecastingTrainer:
             logger.warning(
                 "Segment ensemble fitting produced no artifacts despite pooled OOF data"
             )
+
+        # Champion selection from per-drug OOF (bases + segment stack when available).
+        drug_champion_oof: dict[str, dict] = {}
+        for drug_code, oof_by_model in drug_oof_results.items():
+            if not oof_by_model:
+                continue
+            first = next(iter(oof_by_model.values()))
+            actuals = np.asarray(first.oof_actuals, dtype=float)
+            payload: dict = {"actuals": actuals}
+            for name in ("sarima", "lgbm", "classical"):
+                wf = oof_by_model.get(name)
+                if wf is None:
+                    continue
+                preds = np.asarray(wf.oof_p50, dtype=float)
+                if preds.shape != actuals.shape:
+                    continue
+                payload[name] = preds
+            if len(payload) <= 1:
+                continue
+            try:
+                stacker = StackingMetaLearner(segment=GLOBAL_DEMAND_SEGMENT)
+                stacker.load()
+                ens, _ = stacker.predict(
+                    payload.get("sarima", np.full_like(actuals, np.nan)),
+                    payload.get("lgbm", np.full_like(actuals, np.nan)),
+                    payload.get("classical", np.full_like(actuals, np.nan)),
+                    demand_segment=segment_by_drug.get(drug_code, "smooth"),
+                    history_days=len(actuals),
+                    recent_cv2=0.0,
+                )
+                payload["ensemble"] = ens
+            except Exception:
+                payload["ensemble"] = None
+            drug_champion_oof[drug_code] = payload
+
+        try:
+            champion_paths = select_and_persist_champions(
+                drug_oof=drug_champion_oof,
+                segment_by_drug=segment_by_drug,
+            )
+            artifacts_saved.extend(champion_paths)
+        except Exception:
+            logger.exception("Champion selection failed — continuing with ensemble default")
+
+        # Persist ensemble OOF metrics per drug
+        for drug_code, payload in drug_champion_oof.items():
+            if "ensemble" not in payload or payload["ensemble"] is None:
+                continue
+            try:
+                actuals = np.asarray(payload["actuals"], dtype=float)
+                ens_pred = np.asarray(payload["ensemble"], dtype=float)
+                if actuals.size == 0 or ens_pred.size == 0:
+                    continue
+                
+                ens_smape = float(np.mean([smape_single(float(a), float(p)) for a, p in zip(actuals, ens_pred)]))
+                ens_mase = finite_mase_or_none(compute_mase(actuals, ens_pred))
+                
+                # Use walk-forward from first available base model for rolling metrics
+                ens_wf = next((drug_oof_results.get(drug_code, {}).get(m) 
+                               for m in ["sarima", "lgbm", "classical"] if m in drug_oof_results.get(drug_code, {})), None)
+                
+                ens_rolling = {}
+                if ens_wf and ens_wf.oof_actuals.size > 0:
+                    try:
+                        stockout_flags = np.zeros(len(actuals), dtype=bool)  # TODO: get real flags
+                        rolling_metrics_dict = rolling_validation_metrics(
+                            actuals, ens_pred, stockout_flags=stockout_flags
+                        )
+                        for attr in ["smape_7day_full", "smape_30day_full", "mase_7day_full", "mase_30day_full",
+                                     "smape_7day_normal", "smape_30day_normal", "mase_7day_normal", "mase_30day_normal"]:
+                            val = rolling_metrics_dict.get(attr)
+                            if val is not None and np.isfinite(val):
+                                ens_rolling[attr] = float(val)
+                    except Exception:
+                        pass
+                
+                db_session.add(
+                    ModelPerformance(
+                        drug_code=drug_code,
+                        model_name="ensemble",
+                        smape=float(ens_smape),
+                        smape_normal_supply=float(ens_smape),  # TODO: proper normal supply calc
+                        coverage_90=0.0,  # Not computed in OOF
+                        mase=ens_mase,
+                        mase_normal_supply=ens_mase,
+                        smape_7day_full=ens_rolling.get("smape_7day_full"),
+                        smape_30day_full=ens_rolling.get("smape_30day_full"),
+                        mase_7day_full=ens_rolling.get("mase_7day_full"),
+                        mase_30day_full=ens_rolling.get("mase_30day_full"),
+                        smape_7day_normal=ens_rolling.get("smape_7day_normal"),
+                        smape_30day_normal=ens_rolling.get("smape_30day_normal"),
+                        mase_7day_normal=ens_rolling.get("mase_7day_normal"),
+                        mase_30day_normal=ens_rolling.get("mase_30day_normal"),
+                        training_run_id=training_run_id,
+                        demand_segment=segment_by_drug.get(drug_code),
+                        data_quality_status="pass",
+                    )
+                )
+                logger.info(
+                    "Ensemble metrics for %s: sMAPE=%.2f%%, MASE=%s",
+                    drug_code,
+                    ens_smape,
+                    f"{ens_mase:.3f}" if ens_mase else "N/A",
+                )
+            except Exception:
+                logger.exception("Failed to persist ensemble metrics for %s", drug_code)
 
         db_session.commit()
 

@@ -20,6 +20,7 @@ def artifacts_dir(tmp_path, monkeypatch) -> Iterator[str]:
     path = str(tmp_path / "artifacts")
     monkeypatch.setattr("app.forecasting.models.sarima_model.ARTIFACTS_DIR", path)
     monkeypatch.setattr("app.forecasting.models.lgbm_model.ARTIFACTS_DIR", path)
+    monkeypatch.setattr("app.forecasting.models.classical_model.ARTIFACTS_DIR", path)
     monkeypatch.setattr("app.forecasting.models.tft_model.ARTIFACTS_DIR", path)
     monkeypatch.setattr("app.forecasting.constants.ARTIFACTS_DIR", path)
     monkeypatch.setattr("app.forecasting.ensemble.segment_artifacts.ARTIFACTS_DIR", path)
@@ -40,10 +41,17 @@ class TestForecastingTrainer:
 
         with (
             patch.object(trainer, "_build_corrected_frame", side_effect=build_side_effect),
+            patch(
+                "app.forecasting.training.trainer.assess_series_quality",
+            ) as mock_quality,
+            patch(
+                "app.forecasting.training.trainer.classify_demand_segment_from_frame",
+                return_value="smooth",
+            ),
             patch.object(
                 trainer,
                 "_train_single_model",
-                return_value=(True, f"{artifacts_dir}/sarima/drug-a.pkl", 12.5, 0.91),
+                return_value=(True, f"{artifacts_dir}/sarima/drug-a.pkl", 12.5, 0.91, 0.8, None),
             ),
             patch(
                 "app.forecasting.training.trainer.collect_walk_forward_predictions",
@@ -52,7 +60,24 @@ class TestForecastingTrainer:
                     "actuals": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0],
                 },
             ),
+            patch(
+                "app.forecasting.training.trainer.select_and_persist_champions",
+                return_value=[],
+            ),
+            patch(
+                "app.forecasting.training.trainer.recent_cv2",
+                return_value=0.1,
+            ),
         ):
+            mock_quality.return_value = MagicMock(
+                should_skip_training=False,
+                is_flagged=False,
+                status="ok",
+                reasons=[],
+            )
+            # Enough attributes for OOF segment append path.
+            corrected_df.__contains__ = MagicMock(return_value=False)
+            corrected_df.__getitem__ = MagicMock(return_value=MagicMock(astype=MagicMock(return_value=MagicMock(values=[1.0] * 120))))
             response = trainer.train_all(
                 drug_codes=["drug-a", "drug-b"],
                 models_to_train=["sarima"],

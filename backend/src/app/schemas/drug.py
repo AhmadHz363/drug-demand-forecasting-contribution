@@ -16,6 +16,9 @@ class DrugItem(BaseModel):
     drug_name: Optional[str] = None
     drug_category: Optional[str] = None
     receipt_count: int
+    distinct_receipt_days: int = 0
+    first_receipt_date: Optional[date] = None
+    last_receipt_date: Optional[date] = None
     created_at: datetime
     updated_at: datetime
 

@@ -35,7 +35,21 @@ def list_drugs(
 ) -> PaginatedDrugListResponse:
     rows, total = search_drugs(db, q, page=page, page_size=page_size)
     return PaginatedDrugListResponse(
-        items=[DrugItem.model_validate(row) for row in rows],
+        items=[
+            DrugItem(
+                id=row["drug"].id,
+                drug_code=row["drug"].drug_code,
+                drug_name=row["drug"].drug_name,
+                drug_category=row["drug"].drug_category,
+                receipt_count=row["drug"].receipt_count,
+                distinct_receipt_days=row["distinct_receipt_days"],
+                first_receipt_date=row["first_receipt_date"],
+                last_receipt_date=row["last_receipt_date"],
+                created_at=row["drug"].created_at,
+                updated_at=row["drug"].updated_at,
+            )
+            for row in rows
+        ],
         total=total,
         page=page,
         page_size=page_size,

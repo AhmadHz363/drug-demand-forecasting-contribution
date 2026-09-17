@@ -47,11 +47,18 @@ def assess_series_quality(df: pd.DataFrame, drug_code: str) -> DataQualityReport
     Evaluate whether a corrected demand series is safe to train on.
 
     Rejects degenerate imputation; flags high fallback-default coverage.
+    History counts exclude coverage-gap rows.
     """
     reasons: list[str] = []
-    history_days = len(df)
-    external_rate = _default_rate(df, "external_features_is_default")
-    supplier_rate = _default_rate(df, "supplier_features_is_default")
+    if "is_coverage_gap" in df.columns:
+        covered = df.loc[df["is_coverage_gap"].astype(int) == 0]
+        history_days = len(covered) if not covered.empty else len(df)
+        quality_df = covered if not covered.empty else df
+    else:
+        history_days = len(df)
+        quality_df = df
+    external_rate = _default_rate(quality_df, "external_features_is_default")
+    supplier_rate = _default_rate(quality_df, "supplier_features_is_default")
 
     if history_days < DATA_QUALITY_MIN_HISTORY_DAYS:
         reasons.append(
@@ -73,7 +80,7 @@ def assess_series_quality(df: pd.DataFrame, drug_code: str) -> DataQualityReport
     degenerate = False
     if DATA_QUALITY_REJECT_DEGENERATE_IMPUTATION:
         try:
-            assert_no_degenerate_stockout_imputation(df)
+            assert_no_degenerate_stockout_imputation(quality_df)
         except ValueError as exc:
             degenerate = True
             reasons.append(str(exc))

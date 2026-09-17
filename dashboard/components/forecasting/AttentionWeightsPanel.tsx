@@ -42,7 +42,7 @@ export function AttentionWeightsPanel({
       <EmptyState
         icon={<Eye className="h-6 w-6" />}
         title="No attention weights"
-        description="Enable “Include TFT attention” when running a forecast to see which past weeks the TFT model focused on."
+        description="Attention weights are deprecated. The active ensemble no longer uses TFT."
       />
     );
   }
@@ -52,10 +52,10 @@ export function AttentionWeightsPanel({
   return (
     <div className={wrapperClass}>
       {!embedded && (
-        <h2 className="mb-2 text-lg font-semibold text-slate-900">TFT Temporal Attention</h2>
+        <h2 className="mb-2 text-lg font-semibold text-slate-900">Attention Weights (Deprecated)</h2>
       )}
       <p className="mb-4 text-sm text-slate-500">
-        How much the TFT model attends to each past week when forming its forecast.
+        TFT temporal attention is no longer produced by the active forecasting ensemble.
       </p>
 
       <ResponsiveContainer width="100%" height={280}>

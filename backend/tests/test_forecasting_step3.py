@@ -64,46 +64,57 @@ def _drug_with_history(min_days: int) -> Optional[str]:
 
 
 class TestDetectStockoutWindows:
-    def test_identifies_zero_between_nonzero_days(self):
+    def test_isolated_zero_day_not_flagged(self):
         quantities = [5.0] * 5 + [0.0] + [8.0] * 5 + [0.0] * 20
         df = _synthetic_feature_frame(quantities)
         df = df.reset_index()
         result = detect_stockout_windows(df, "TEST-DRUG", db_session=None)
-        assert result.loc[5, "is_stockout"]
+        assert not result.loc[5, "is_stockout"]
         assert not result.loc[0, "is_stockout"]
+        assert not result["is_stockout"].any()
 
-    def test_genuine_zero_period_not_flagged_when_window_is_all_zero(self):
+    def test_short_zero_run_not_flagged(self):
         quantities = [10.0] * 5 + [0.0] * 20
         df = _synthetic_feature_frame(quantities)
         df = df.reset_index()
         result = detect_stockout_windows(df, "TEST-DRUG", db_session=None)
-        # Last rows have no non-zero demand anywhere in ±14-day window.
-        tail = result.iloc[-1:]
-        assert not tail["is_stockout"].any()
+        assert not result["is_stockout"].any()
+
+    def test_long_zero_run_flagged(self):
+        quantities = [10.0] * 5 + [0.0] * 50 + [12.0] * 5
+        df = _synthetic_feature_frame(quantities)
+        df = df.reset_index()
+        result = detect_stockout_windows(df, "TEST-DRUG", db_session=None)
+        flagged = result.loc[5:54, "is_stockout"]
+        assert flagged.all()
+        assert not result.loc[0, "is_stockout"]
+        assert not result.iloc[-1]["is_stockout"]
 
 
 class TestTobitCorrection:
     def test_imputed_values_exceed_zero(self):
-        quantities = [10.0] * 10 + [0.0] + [12.0] * 10
+        quantities = [10.0] * 10 + [0.0] * 50 + [12.0] * 10
         df = _synthetic_feature_frame(quantities).reset_index()
         df = detect_stockout_windows(df, "TEST-DRUG", db_session=None)
         corrected = apply_tobit_correction(df)
         stockout_rows = corrected.loc[corrected["is_stockout"]]
+        assert not stockout_rows.empty
         assert (stockout_rows["total_quantity"] > 0).all()
         assert (stockout_rows["correction_method"] == "tobit").all()
 
 
 class TestWeibullCorrection:
     def test_imputed_values_positive(self):
-        quantities = [10.0] * 5 + [0.0] * 8 + [12.0] * 5
+        quantities = [10.0] * 5 + [0.0] * 50 + [12.0] * 5
         df = _synthetic_feature_frame(quantities).reset_index()
         df = detect_stockout_windows(df, "TEST-DRUG", db_session=None)
         corrected = apply_weibull_correction(df)
         stockout_rows = corrected.loc[corrected["is_stockout"]]
+        assert not stockout_rows.empty
         assert (stockout_rows["total_quantity"] > 0).all()
 
     def test_missing_lifelines_raises_import_error(self):
-        quantities = [10.0] * 5 + [0.0] * 8 + [12.0] * 5
+        quantities = [10.0] * 5 + [0.0] * 50 + [12.0] * 5
         df = _synthetic_feature_frame(quantities).reset_index()
         df = detect_stockout_windows(df, "TEST-DRUG", db_session=None)
 
@@ -123,7 +134,7 @@ class TestWeibullCorrection:
 
 class TestEmCorrectedSeries:
     def test_converges_within_max_iterations(self, caplog):
-        quantities = [10.0] * 15 + [0.0] + [12.0] * 15
+        quantities = [10.0] * 15 + [0.0] * 50 + [12.0] * 15
         df = _synthetic_feature_frame(quantities).reset_index()
         df = detect_stockout_windows(df, "TEST-DRUG", db_session=None)
         with caplog.at_level(logging.INFO):

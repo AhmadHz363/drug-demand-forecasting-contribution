@@ -16,9 +16,25 @@ from app.forecasting.feature_engineering.lag_features import add_lag_features
 from app.forecasting.feature_engineering.rolling_features import add_rolling_features
 from app.forecasting.feature_engineering.supplier_features import add_supplier_features
 from app.forecasting.feature_engineering.temporal_features import add_temporal_features
-from app.services.demand_aggregation import aggregate_daily_demand_rows
+from app.services.demand_aggregation import (
+    aggregate_daily_demand_rows,
+    get_import_coverage_periods,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _coverage_flag_series(
+    dates: pd.Series,
+    periods: list[tuple[date, date]],
+) -> pd.Series:
+    if not periods:
+        return pd.Series(0, index=dates.index, dtype=int)
+
+    def _covered(day: date) -> bool:
+        return any(start <= day <= end for start, end in periods)
+
+    return dates.map(lambda d: 0 if _covered(d) else 1).astype(int)
 
 
 def _load_demand_series(
@@ -28,6 +44,13 @@ def _load_demand_series(
     end_date: date,
     center_syn_id: Optional[str] = None,
 ) -> pd.DataFrame:
+    """
+    Build a daily demand frame with explicit coverage gaps.
+
+    - Days inside a covered import period with no demand → true zero
+    - Days outside all import coverage periods → is_coverage_gap=1 (not treated as demand)
+    """
+    periods = get_import_coverage_periods(db_session)
     rows = aggregate_daily_demand_rows(
         db_session,
         drug_code,
@@ -36,31 +59,60 @@ def _load_demand_series(
         center_syn_id=center_syn_id,
     )
 
+    full_index = pd.date_range(start=start_date, end=end_date, freq="D")
     if not rows:
-        full_index = pd.date_range(start=start_date, end=end_date, freq="D")
-        return pd.DataFrame(
+        df = pd.DataFrame(
             {
                 "demand_date": full_index.date,
                 "total_quantity": 0.0,
                 "demand_filled": 1,
             }
         )
+    else:
+        df = pd.DataFrame(rows, columns=["demand_date", "total_quantity"])
+        df["demand_date"] = pd.to_datetime(df["demand_date"])
+        df["total_quantity"] = df["total_quantity"].astype(float)
+        original_dates = set(pd.to_datetime(df["demand_date"]).dt.normalize())
+        df = (
+            df.set_index("demand_date")
+            .reindex(full_index)
+            .rename_axis("demand_date")
+            .reset_index()
+        )
+        # Only fill zeros inside covered periods; leave gap days as NaN until flagged.
+        date_vals = pd.to_datetime(df["demand_date"]).dt.normalize()
+        covered_mask = date_vals.map(
+            lambda ts: any(start <= ts.date() <= end for start, end in periods)
+        )
+        if not periods:
+            covered_mask = pd.Series(True, index=df.index)
+        df.loc[covered_mask & df["total_quantity"].isna(), "total_quantity"] = 0.0
+        df["demand_filled"] = (
+            ~date_vals.isin(original_dates) & covered_mask
+        ).astype(int)
 
-    df = pd.DataFrame(rows, columns=["demand_date", "total_quantity"])
-    df["demand_date"] = pd.to_datetime(df["demand_date"])
-    df["total_quantity"] = df["total_quantity"].astype(float)
-    original_dates = df["demand_date"].copy()
-
-    full_index = pd.date_range(start=start_date, end=end_date, freq="D")
-    df = (
-        df.set_index("demand_date")
-        .reindex(full_index, fill_value=0.0)
-        .rename_axis("demand_date")
-        .reset_index()
-    )
-    df["demand_filled"] = (~pd.to_datetime(df["demand_date"]).isin(original_dates)).astype(int)
-    df["demand_date"] = df["demand_date"].dt.date
+    df["demand_date"] = pd.to_datetime(df["demand_date"]).dt.date
+    df["is_coverage_gap"] = _coverage_flag_series(pd.Series(df["demand_date"]), periods)
+    # Uncovered years are excluded from demand modelling, not zero-filled.
+    gap_mask = df["is_coverage_gap"].astype(int) == 1
+    df.loc[gap_mask, "total_quantity"] = np.nan
+    df.loc[gap_mask, "demand_filled"] = 0
     return apply_consumption_demand(df)
+
+
+def covered_demand_mask(df: pd.DataFrame) -> pd.Series:
+    """Boolean mask of rows that are inside imported coverage and usable for metrics."""
+    if "is_coverage_gap" in df.columns:
+        return df["is_coverage_gap"].astype(int) == 0
+    return pd.Series(True, index=df.index)
+
+
+def filter_covered_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop coverage-gap rows for segmentation, stockout correction, and history counts."""
+    mask = covered_demand_mask(df)
+    if mask.all():
+        return df
+    return df.loc[mask].copy()
 
 
 def build_feature_matrix(
@@ -76,21 +128,20 @@ def build_feature_matrix(
     Demand history is aggregated directly from ``drug_receipts`` (source of truth).
     Center-specific forecasts aggregate receipts for that center only at query time.
 
-    Columns guaranteed in output:
-    - demand_date (index)
-    - total_quantity (non-negative consumption demand; net negatives are abs'd)
-    - all temporal features (14 columns)
-    - all lag features (4 + 1 gap flag)
-    - all rolling features (17 columns)
-    - external features (2 columns)
-    - supplier features (3 columns)
-    Total: ~41 feature columns + target
+    Coverage-gap days are retained with ``is_coverage_gap=1`` so lag/rolling
+    features can reset at segment boundaries; callers that need contiguous
+    history should use ``filter_covered_rows``.
     """
     if end_date < start_date:
         raise ValueError("end_date must be on or after start_date")
 
     df = _load_demand_series(db_session, drug_code, start_date, end_date, center_syn_id)
     df = df.sort_values("demand_date").reset_index(drop=True)
+
+    # Keep observed zeros for covered days; gap rows stay NaN until lag/rolling reset.
+    if "total_quantity" in df.columns:
+        covered = df["is_coverage_gap"].astype(int) == 0
+        df.loc[covered, "total_quantity"] = df.loc[covered, "total_quantity"].fillna(0.0)
 
     df = add_temporal_features(df)
     df = add_lag_features(df)
@@ -104,15 +155,35 @@ def build_feature_matrix(
     df["forecast_step_sin"] = 0.0
     df["forecast_step_cos"] = 1.0
 
-    if df.isnull().any().any():
-        df = df.fillna(0)
+    # Do not zero-fill coverage-gap demand or intentionally-missing covariates.
+    preserve_nan_cols = {
+        "demand_date",
+        "is_coverage_gap",
+        "total_quantity",
+        "observed_quantity",
+        "em_corrected_quantity",
+        "bed_occupancy_rate",
+        "weekly_surgery_count",
+        "avg_lead_time_days",
+        "lead_time_std_days",
+        "reliability_score",
+        "supplier_avg_lead_time",
+        "supplier_lead_time_std",
+        "supplier_reliability_score",
+    }
+    for col in df.columns:
+        if col in preserve_nan_cols:
+            continue
+        if df[col].dtype.kind in "fc":
+            df[col] = df[col].fillna(0)
 
     df = df.set_index("demand_date")
     logger.debug(
-        "Feature matrix for %s: shape=%s columns=%d",
+        "Feature matrix for %s: shape=%s columns=%d gaps=%s",
         drug_code,
         df.shape,
         len(df.columns),
+        int(df["is_coverage_gap"].sum()) if "is_coverage_gap" in df.columns else 0,
     )
     return df
 
@@ -134,6 +205,7 @@ def build_future_covariates(
     end = pd.Timestamp(last_date) + pd.Timedelta(days=horizon_days)
     future_dates = pd.date_range(start=start, end=end, freq="D")
     df = pd.DataFrame({"demand_date": future_dates.date})
+    df["is_coverage_gap"] = 0
     df = add_temporal_features(df)
     df = add_external_features(
         df,

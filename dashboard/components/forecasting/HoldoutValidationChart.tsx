@@ -18,7 +18,7 @@ import type { HoldoutResponse } from "@/lib/types";
 
 import { EmptyState } from "@/components/cold-start/ui";
 
-type SeriesKey = "ensemble" | "sarima" | "lgbm" | "tft";
+type SeriesKey = "ensemble" | "sarima" | "lgbm" | "classical";
 
 interface HoldoutValidationChartProps {
   data: HoldoutResponse | null;
@@ -37,7 +37,7 @@ const SERIES_CONFIG: Record<
 > = {
   sarima: { key: "sarima_p50", label: "SARIMA (P50)", color: "#7c3aed" },
   lgbm: { key: "lgbm_p50", label: "LightGBM (P50)", color: "#059669" },
-  tft: { key: "tft_p50", label: "TFT (P50)", color: "#d97706" },
+  classical: { key: "classical_p50", label: "Classical (P50)", color: "#d97706" },
 };
 
 export function HoldoutValidationChart({
@@ -118,8 +118,8 @@ export function HoldoutValidationChart({
                   {row.lgbm_p50 != null && (
                     <p className="text-emerald-700">LightGBM: {row.lgbm_p50.toFixed(2)}</p>
                   )}
-                  {row.tft_p50 != null && (
-                    <p className="text-amber-700">TFT: {row.tft_p50.toFixed(2)}</p>
+                  {row.classical_p50 != null && (
+                    <p className="text-amber-700">Classical: {row.classical_p50.toFixed(2)}</p>
                   )}
                 </div>
               );
@@ -133,7 +133,7 @@ export function HoldoutValidationChart({
                 bandBase: "Ensemble band (P10–P90)",
                 sarima_p50: "SARIMA (P50)",
                 lgbm_p50: "LightGBM (P50)",
-                tft_p50: "TFT (P50)",
+                classical_p50: "Classical (P50)",
               };
               return labels[value] ?? value;
             }}

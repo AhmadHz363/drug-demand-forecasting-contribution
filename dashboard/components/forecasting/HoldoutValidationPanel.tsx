@@ -31,13 +31,13 @@ import {
 
 import { HoldoutValidationChart } from "./HoldoutValidationChart";
 
-type SeriesKey = "ensemble" | "sarima" | "lgbm" | "tft";
+type SeriesKey = "ensemble" | "sarima" | "lgbm" | "classical";
 
 const SERIES_OPTIONS: { id: SeriesKey; label: string }[] = [
   { id: "ensemble", label: "Ensemble" },
   { id: "sarima", label: "SARIMA" },
   { id: "lgbm", label: "LightGBM" },
-  { id: "tft", label: "TFT" },
+  { id: "classical", label: "Classical" },
 ];
 
 function accuracyAccent(pct: number): "green" | "amber" | "blue" | "slate" {
@@ -188,7 +188,7 @@ export function HoldoutValidationPanel() {
         train_end: trainEnd,
         test_start: testStart,
         test_end: testEnd,
-        models: ["sarima", "lgbm", "tft"],
+        models: ["sarima", "lgbm", "classical"],
       };
       const result = await runHoldoutValidation(req);
       setData(result);
@@ -368,9 +368,27 @@ export function HoldoutValidationPanel() {
           <>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <StatChip
-                label="Total accuracy (ensemble)"
-                value={`${data.total_accuracy_pct.toFixed(1)}%`}
-                accent={accuracyAccent(data.total_accuracy_pct)}
+                label={
+                  data.smape_unreliable ||
+                  data.demand_segment === "intermittent" ||
+                  data.demand_segment === "lumpy"
+                    ? "MASE skill (ensemble)"
+                    : "Total accuracy (ensemble)"
+                }
+                value={
+                  data.smape_unreliable ||
+                  data.demand_segment === "intermittent" ||
+                  data.demand_segment === "lumpy"
+                    ? `${data.total_accuracy_skill_pct.toFixed(1)}%`
+                    : `${data.total_accuracy_pct.toFixed(1)}%`
+                }
+                accent={accuracyAccent(
+                  data.smape_unreliable ||
+                    data.demand_segment === "intermittent" ||
+                    data.demand_segment === "lumpy"
+                    ? data.total_accuracy_skill_pct
+                    : data.total_accuracy_pct,
+                )}
               />
               {data.metrics.ensemble && (
                 <>
@@ -382,6 +400,11 @@ export function HoldoutValidationPanel() {
                   <StatChip
                     label="Ensemble sMAPE"
                     value={`${data.metrics.ensemble.smape.toFixed(1)}%`}
+                    accent="slate"
+                  />
+                  <StatChip
+                    label="Ensemble MASE skill"
+                    value={`${data.metrics.ensemble.accuracy_skill_pct.toFixed(1)}%`}
                     accent="blue"
                   />
                   <StatChip
@@ -399,24 +422,40 @@ export function HoldoutValidationPanel() {
               )}
             </div>
 
+            {data.smape_unreliable && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                MASE skill is the primary accuracy metric for {data.demand_segment} demand
+                {data.validation_zero_actual_fraction != null && (
+                  <> ({(data.validation_zero_actual_fraction * 100).toFixed(0)}% zero-actual days)</>
+                )}
+                . sMAPE is shown for reference only on sparse series.
+              </p>
+            )}
+
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {(["ensemble", "sarima", "lgbm", "tft"] as const).map((model) => {
+              {(["ensemble", "sarima", "lgbm", "classical"] as const).map((model) => {
                 const metrics = data.metrics[model];
                 if (!metrics) return null;
                 const label =
                   model === "ensemble"
                     ? "Ensemble"
                     : FORECAST_MODEL_LABELS[model as ForecastModelId];
+                const useMaseSkill =
+                  data.smape_unreliable ||
+                  data.demand_segment === "intermittent" ||
+                  data.demand_segment === "lumpy";
                 return (
                   <StatChip
                     key={model}
-                    label={`${label} accuracy`}
-                    value={`${metrics.accuracy_pct.toFixed(1)}%`}
-                    accent={
-                      model === "ensemble"
-                        ? accuracyAccent(metrics.accuracy_pct)
-                        : accuracyAccent(metrics.accuracy_pct)
+                    label={`${label} ${useMaseSkill ? "MASE skill" : "accuracy"}`}
+                    value={
+                      useMaseSkill
+                        ? `${metrics.accuracy_skill_pct.toFixed(1)}%`
+                        : `${metrics.accuracy_pct.toFixed(1)}%`
                     }
+                    accent={accuracyAccent(
+                      useMaseSkill ? metrics.accuracy_skill_pct : metrics.accuracy_pct,
+                    )}
                   />
                 );
               })}

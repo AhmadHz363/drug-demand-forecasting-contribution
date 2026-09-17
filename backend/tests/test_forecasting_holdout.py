@@ -63,7 +63,7 @@ class TestHoldoutSchemas:
         assert req.train_end == date(2025, 12, 31)
         assert req.test_start == date(2026, 1, 1)
         assert req.test_end == date(2026, 3, 31)
-        assert req.models == ["sarima", "lgbm", "tft"]
+        assert req.models == ["sarima", "lgbm", "classical"]
 
     def test_drug_code_required(self):
         with pytest.raises(ValidationError):

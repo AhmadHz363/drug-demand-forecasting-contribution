@@ -79,7 +79,7 @@ export interface TrainForecastingRequest {
 export interface ModelWeightBreakdown {
   sarima: number;
   lgbm: number;
-  tft: number;
+  classical: number;
 }
 
 export interface ShapFeature {
@@ -104,10 +104,30 @@ export interface ForecastResponse {
   attention_weights?: AttentionWeight[] | null;
   uncertainty_note: string;
   smape_last_validation?: number | null;
+  smape_validation_full_window?: number | null;
+  smape_validation_normal_supply?: number | null;
+  mase_validation_full_window?: number | null;
+  mase_validation_normal_supply?: number | null;
+  mase_beats_baseline_full_window?: boolean | null;
+  mase_beats_baseline_normal_supply?: boolean | null;
+  mase_skill_validation_full_window?: number | null;
+  smape_validation_7day_total?: number | null;
+  smape_validation_30day_total?: number | null;
+  mase_validation_7day_total?: number | null;
+  mase_validation_30day_total?: number | null;
+  smape_validation_7day_normal_supply?: number | null;
+  smape_validation_30day_normal_supply?: number | null;
+  mase_validation_7day_normal_supply?: number | null;
+  mase_validation_30day_normal_supply?: number | null;
   ven_class?: string | null;
   operating_quantile?: number | null;
   recommended_quantity_total?: number | null;
   inference_health?: InferenceHealth | null;
+  demand_segment?: string | null;
+  validation_zero_actual_fraction?: number | null;
+  smape_validation_unreliable?: boolean | null;
+  primary_validation_metric?: string | null;
+  validation_metrics_note?: string | null;
   error?: string | null;
 }
 
@@ -140,7 +160,7 @@ export interface ModelPerformanceRow {
   training_run_id?: string | null;
   weight_sarima?: number | null;
   weight_lgbm?: number | null;
-  weight_tft?: number | null;
+  weight_classical?: number | null;
   weights_as_of?: string | null;
   smape_drift_pct?: number | null;
   mase_drift_pct?: number | null;
@@ -176,7 +196,7 @@ export interface HoldoutSeriesPoint {
   actual: number;
   sarima_p50?: number | null;
   lgbm_p50?: number | null;
-  tft_p50?: number | null;
+  classical_p50?: number | null;
   ensemble_p50?: number | null;
   ensemble_p10?: number | null;
   ensemble_p90?: number | null;
@@ -218,6 +238,9 @@ export interface HoldoutResponse {
   demand_segment: string;
   total_accuracy_pct: number;
   total_accuracy_skill_pct: number;
+  primary_accuracy_metric?: string;
+  smape_unreliable?: boolean;
+  validation_zero_actual_fraction?: number;
   model_weights: ModelWeightBreakdown;
   series: HoldoutSeriesPoint[];
 }
@@ -260,6 +283,9 @@ export interface DrugItem {
   drug_name?: string | null;
   drug_category?: string | null;
   receipt_count: number;
+  distinct_receipt_days: number;
+  first_receipt_date?: string | null;
+  last_receipt_date?: string | null;
   created_at: string;
   updated_at: string;
 }

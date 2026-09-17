@@ -192,9 +192,9 @@ class TFTModel(BaseForecastingModel):
             max_encoder_length=max_encoder,
             min_prediction_length=1,
             max_prediction_length=max_prediction,
-            time_varying_known_reals=tft_known_reals(),
-            time_varying_unknown_reals=tft_unknown_reals(),
-            static_reals=tft_static_reals(),
+            time_varying_known_reals=tft_known_reals(working),
+            time_varying_unknown_reals=tft_unknown_reals(working),
+            static_reals=tft_static_reals(working),
             target_normalizer=GroupNormalizer(
                 groups=["drug_code"],
                 transformation="softplus",
@@ -317,7 +317,7 @@ class TFTModel(BaseForecastingModel):
         last_date = pd.Timestamp(working.index[-1])
         carry_cols = [
             col
-            for col in tft_known_reals() + tft_static_reals()
+            for col in tft_known_reals(base) + tft_static_reals(base)
             if col in base.columns and col not in temporal_feature_columns()
         ]
         last_row = base.iloc[-1]

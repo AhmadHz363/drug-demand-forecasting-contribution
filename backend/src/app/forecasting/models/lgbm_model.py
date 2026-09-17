@@ -14,6 +14,7 @@ from app.forecasting.constants import (
     ARTIFACTS_DIR,
     LGBM_LOOKBACK_WINDOW,
     LGBM_QUANTILES,
+    LGBM_RECENCY_HALFLIFE_DAYS,
     LGBM_VALID_FRACTION,
     MIN_HISTORY_DAYS_LGBM,
     SHAP_MAX_SAMPLE_ROWS,
@@ -106,9 +107,14 @@ class LightGBMModel(BaseForecastingModel):
         x_train, x_valid = x.iloc[:split_idx], x.iloc[split_idx:]
         y_train, y_valid = y.iloc[:split_idx], y.iloc[split_idx:]
 
+        # Recency weights: recent covered years dominate; older years still contribute.
+        ages = np.arange(len(x_train), 0, -1, dtype=float)
+        sample_weight = np.power(0.5, ages / float(LGBM_RECENCY_HALFLIFE_DAYS))
+
         train_set = lgb.Dataset(
             x_train,
             label=y_train,
+            weight=sample_weight,
             categorical_feature=self._categorical_features or "auto",
         )
         valid_set = lgb.Dataset(

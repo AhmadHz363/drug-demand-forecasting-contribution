@@ -12,15 +12,11 @@ import pytest
 
 from app.forecasting.constants import (
     CV2_THRESHOLD,
-    MIN_HISTORY_DAYS_TFT,
-    MIN_HISTORY_DAYS_TFT_SHORT,
+    MIN_HISTORY_DAYS_CLASSICAL,
     SARIMA_FORECAST_SHRINKAGE,
     SARIMA_TRAIN_DAYS,
     SARIMA_TRAIN_DAYS_SHORT,
     STACKING_DISAGREEMENT_CAP_RATIO,
-    TFT_MAX_EPOCHS,
-    TFT_WALK_FORWARD_EPOCH_RATIO,
-    TFT_WALK_FORWARD_MAX_EPOCHS,
 )
 from app.forecasting.ensemble.conformal import ConformalCalibrator
 from app.forecasting.ensemble.stacking import StackingMetaLearner
@@ -31,11 +27,7 @@ from app.forecasting.model_adaptation import (
     lgbm_training_params,
     select_sarima_train_days,
 )
-from app.forecasting.models.tft_model import _tft_encoder_window, _tft_min_history_days
-from app.forecasting.training.walk_forward import (
-    measure_lgbm_recursive_drift,
-    _walk_forward_tft_epochs,
-)
+from app.forecasting.training.walk_forward import measure_lgbm_recursive_drift
 
 
 class TestAdaptiveHyperparameters:
@@ -68,7 +60,7 @@ class TestStackingMetaFeatures:
             demand_segment="lumpy",
             history_days=np.full(10, 120.0),
             recent_cv2=np.linspace(0.1, 1.0, 10),
-            tft_available=False,
+            classical_available=False,
             horizon_steps=np.arange(1, 11),
         )
         assert meta.shape == (10, 5)
@@ -81,7 +73,7 @@ class TestStackingMetaFeatures:
             artifacts,
         )
         n = 80
-        actuals, sarima, lgbm, tft = _synthetic_predictions(n)
+        actuals, sarima, lgbm, classical = _synthetic_predictions(n)
         steps = np.tile(np.arange(1, 8), n // 7 + 1)[:n]
         history = np.full(n, 200.0)
         cv2 = np.full(n, 0.3)
@@ -90,7 +82,7 @@ class TestStackingMetaFeatures:
         stacker.fit(
             sarima,
             lgbm,
-            tft,
+            classical,
             actuals,
             demand_segment="erratic",
             history_days=history,
@@ -100,7 +92,7 @@ class TestStackingMetaFeatures:
         blend, weights = stacker.predict(
             sarima[:5],
             lgbm[:5],
-            tft[:5],
+            classical[:5],
             demand_segment="erratic",
             history_days=history[:5],
             recent_cv2=cv2[:5],
@@ -108,7 +100,7 @@ class TestStackingMetaFeatures:
             prediction_cap=100.0,
         )
         assert blend.shape == (5,)
-        assert weights.sarima + weights.lgbm + weights.tft == pytest.approx(1.0)
+        assert weights.sarima + weights.lgbm + weights.classical == pytest.approx(1.0)
 
     def test_disagreement_cap_constant(self):
         assert STACKING_DISAGREEMENT_CAP_RATIO == 0.5
@@ -147,23 +139,9 @@ class TestRecursiveDrift:
         assert drift[7] == pytest.approx(4.0)
 
 
-class TestTftShortHistory:
-    def test_min_history_thresholds(self):
-        assert _tft_min_history_days(400) == MIN_HISTORY_DAYS_TFT
-        assert _tft_min_history_days(200) == MIN_HISTORY_DAYS_TFT_SHORT
-        assert _tft_min_history_days(100) == MIN_HISTORY_DAYS_TFT
-
-    def test_encoder_window_shortens(self):
-        assert _tft_encoder_window(400) == 365
-        short = _tft_encoder_window(200)
-        assert 150 <= short <= 180
-
-    def test_walk_forward_epochs_aligned(self):
-        epochs = _walk_forward_tft_epochs()
-        # TFT_WALK_FORWARD_MAX_EPOCHS is a hard ceiling, so epochs must be
-        # at most that value — not at least (the old `max` semantics were wrong).
-        assert epochs <= TFT_WALK_FORWARD_MAX_EPOCHS
-        assert epochs >= 1
+class TestClassicalMinHistory:
+    def test_classical_min_history_constant(self):
+        assert MIN_HISTORY_DAYS_CLASSICAL == 60
 
 
 def _synthetic_predictions(n: int, seed: int = 7) -> tuple[np.ndarray, ...]:
@@ -171,5 +149,5 @@ def _synthetic_predictions(n: int, seed: int = 7) -> tuple[np.ndarray, ...]:
     actuals = rng.gamma(shape=2.0, scale=10.0, size=n)
     sarima = actuals + rng.normal(0, 3.0, size=n)
     lgbm = actuals + rng.normal(0, 2.5, size=n)
-    tft = actuals + rng.normal(0, 2.0, size=n)
-    return actuals, sarima, lgbm, tft
+    classical = actuals + rng.normal(0, 2.0, size=n)
+    return actuals, sarima, lgbm, classical

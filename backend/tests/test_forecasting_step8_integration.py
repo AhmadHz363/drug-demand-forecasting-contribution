@@ -99,6 +99,9 @@ def patch_artifacts_dir(e2e_artifacts_dir, monkeypatch_module):
         "app.forecasting.models.lgbm_model.ARTIFACTS_DIR", e2e_artifacts_dir
     )
     monkeypatch_module.setattr(
+        "app.forecasting.models.classical_model.ARTIFACTS_DIR", e2e_artifacts_dir
+    )
+    monkeypatch_module.setattr(
         "app.forecasting.models.tft_model.ARTIFACTS_DIR", e2e_artifacts_dir
     )
     monkeypatch_module.setattr(
@@ -115,14 +118,12 @@ def fast_forecasting_training(monkeypatch_module):
     import app.forecasting.constants as constants
     import app.forecasting.models.lgbm_model as lgbm_model
     import app.forecasting.models.sarima_model as sarima_model
-    import app.forecasting.models.tft_model as tft_model
 
     monkeypatch_module.setattr(constants, "LGBM_N_ESTIMATORS", 80)
     monkeypatch_module.setattr(constants, "LGBM_EARLY_STOPPING_ROUNDS", 10)
     monkeypatch_module.setattr(lgbm_model, "LGBM_N_ESTIMATORS", 80)
     monkeypatch_module.setattr(lgbm_model, "LGBM_EARLY_STOPPING_ROUNDS", 10)
     monkeypatch_module.setattr(sarima_model, "SARIMA_MAX_ITER", 50)
-    monkeypatch_module.setattr(tft_model, "TFT_MAX_EPOCHS", 1)
 
 
 @pytest.fixture(scope="module")
@@ -139,7 +140,7 @@ def trained_client(seeded_db):
         "/forecasting/train",
         json={
             "drug_codes": list(LONG_HISTORY_DRUGS),
-            "models": ["sarima", "lgbm"],
+            "models": ["sarima", "lgbm", "classical"],
             "force_retrain": True,
         },
     )
@@ -257,7 +258,7 @@ class TestForecastingStep8Integration:
         assert body["shap_features"]
         assert len(body["shap_features"]) <= 15
         weights = body["model_weights"]
-        assert weights["sarima"] + weights["lgbm"] + weights["tft"] == pytest.approx(1.0)
+        assert weights["sarima"] + weights["lgbm"] + weights["classical"] == pytest.approx(1.0)
         validate_forecast_quantiles(ForecastResponse(**body))
 
     def test_predict_batch_mixed_results(self, trained_client: TestClient):
