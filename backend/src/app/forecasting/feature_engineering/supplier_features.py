@@ -46,6 +46,7 @@ def add_supplier_features(
     out["supplier_avg_lead_time"] = avg_lead
     out["supplier_lead_time_std"] = std_lead
     out["supplier_reliability_score"] = reliability
+    out["supplier_features_is_default"] = 0 if row is not None else 1
     return out
 
 

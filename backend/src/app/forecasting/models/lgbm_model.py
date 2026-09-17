@@ -12,16 +12,17 @@ import pandas as pd
 
 from app.forecasting.constants import (
     ARTIFACTS_DIR,
-    LGBM_EARLY_STOPPING_ROUNDS,
-    LGBM_LEARNING_RATE,
-    LGBM_MAX_DEPTH,
-    LGBM_N_ESTIMATORS,
-    LGBM_NUM_LEAVES,
-    LGBM_QUANTILES,
     LGBM_LOOKBACK_WINDOW,
-    LGBM_RECURSIVE_ANCHOR_WEIGHT,
+    LGBM_QUANTILES,
     LGBM_VALID_FRACTION,
     MIN_HISTORY_DAYS_LGBM,
+)
+from app.forecasting.demand_segmentation import classify_demand_segment_from_frame
+from app.forecasting.model_adaptation import (
+    adaptive_lgbm_anchor_weight,
+    lgbm_training_params,
+    lgbm_training_target,
+    recent_cv2,
 )
 from app.forecasting.prediction_bounds import demand_prediction_cap, winsorize_predictions
 from app.forecasting.demand_quantity import as_consumption_demand
@@ -66,6 +67,8 @@ class LightGBMModel(BaseForecastingModel):
         self._boosters: dict[float, Any] = {}
         self._feature_names: list[str] = []
         self._categorical_features: list[str] = []
+        self._anchor_weight: float = 0.25
+        self._recent_cv2: float = 0.0
 
     def _prepare_xy(self, df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
         working = ensure_demand_date_index(df)
@@ -76,7 +79,7 @@ class LightGBMModel(BaseForecastingModel):
         for col in self._categorical_features:
             x[col] = x[col].astype("category")
         y = pd.Series(
-            as_consumption_demand(working["total_quantity"]),
+            as_consumption_demand(lgbm_training_target(working)),
             index=working.index,
         )
         return x, y
@@ -87,6 +90,15 @@ class LightGBMModel(BaseForecastingModel):
         working = ensure_demand_date_index(df)
         if len(working) > LGBM_LOOKBACK_WINDOW:
             working = working.iloc[-LGBM_LOOKBACK_WINDOW :]
+        segment = classify_demand_segment_from_frame(working)
+        qty_col = (
+            "observed_quantity"
+            if "observed_quantity" in working.columns
+            else "total_quantity"
+        )
+        self._recent_cv2 = recent_cv2(working[qty_col].astype(float).values)
+        self._anchor_weight = adaptive_lgbm_anchor_weight(self._recent_cv2)
+        train_params = lgbm_training_params(segment)
         x, y = self._prepare_xy(working)
 
         split_idx = max(int(len(x) * (1.0 - LGBM_VALID_FRACTION)), 1)
@@ -108,11 +120,13 @@ class LightGBMModel(BaseForecastingModel):
         params = {
             "objective": "quantile",
             "metric": "quantile",
-            "learning_rate": LGBM_LEARNING_RATE,
-            "max_depth": LGBM_MAX_DEPTH,
-            "num_leaves": LGBM_NUM_LEAVES,
+            "learning_rate": train_params["learning_rate"],
+            "max_depth": train_params["max_depth"],
+            "num_leaves": train_params["num_leaves"],
             "verbosity": -1,
         }
+        early_stopping = int(train_params["early_stopping_rounds"])
+        n_estimators = int(train_params["n_estimators"])
 
         self._boosters = {}
         for quantile in LGBM_QUANTILES:
@@ -128,14 +142,20 @@ class LightGBMModel(BaseForecastingModel):
             booster = lgb.train(
                 q_params,
                 train_set,
-                num_boost_round=LGBM_N_ESTIMATORS,
+                num_boost_round=n_estimators,
                 valid_sets=[valid_set],
-                callbacks=[lgb.early_stopping(LGBM_EARLY_STOPPING_ROUNDS, verbose=False)],
+                callbacks=[lgb.early_stopping(early_stopping, verbose=False)],
             )
             self._boosters[quantile] = booster
 
         self._save_shap_summary(x_train, drug_code)
-        logger.info("LightGBM trained for %s on %d days", drug_code, len(x))
+        logger.info(
+            "LightGBM trained for %s on %d days (segment=%s, anchor=%.3f)",
+            drug_code,
+            len(x),
+            segment,
+            self._anchor_weight,
+        )
 
     def _save_shap_summary(self, x_train: pd.DataFrame, drug_code: str) -> None:
         try:
@@ -261,7 +281,7 @@ class LightGBMModel(BaseForecastingModel):
             p10, p50, p90 = self._apply_drift_guard(p10, p50, p90, quantity_history)
             anchor_window = quantity_history[-28:] if quantity_history.size >= 7 else quantity_history
             anchor = float(np.median(anchor_window)) if anchor_window.size else median_qty
-            anchor_w = LGBM_RECURSIVE_ANCHOR_WEIGHT
+            anchor_w = self._anchor_weight
             p50 = (1.0 - anchor_w) * p50 + anchor_w * anchor
             p10 = (1.0 - anchor_w) * p10 + anchor_w * max(anchor * 0.8, 0.0)
             p90 = (1.0 - anchor_w) * p90 + anchor_w * max(anchor * 1.2, p50)
@@ -301,6 +321,8 @@ class LightGBMModel(BaseForecastingModel):
                 {
                     "feature_names": self._feature_names,
                     "categorical_features": self._categorical_features,
+                    "anchor_weight": self._anchor_weight,
+                    "recent_cv2": self._recent_cv2,
                 },
                 handle,
             )
@@ -313,6 +335,8 @@ class LightGBMModel(BaseForecastingModel):
             meta = json.load(handle)
         self._feature_names = meta["feature_names"]
         self._categorical_features = meta.get("categorical_features", [])
+        self._anchor_weight = float(meta.get("anchor_weight", 0.25))
+        self._recent_cv2 = float(meta.get("recent_cv2", 0.0))
         self._boosters = {}
         for quantile in LGBM_QUANTILES:
             self._boosters[quantile] = lgb.Booster(model_file=_artifact_path(drug_code, quantile))

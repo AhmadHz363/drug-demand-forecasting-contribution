@@ -102,10 +102,10 @@ def patch_artifacts_dir(e2e_artifacts_dir, monkeypatch_module):
         "app.forecasting.models.tft_model.ARTIFACTS_DIR", e2e_artifacts_dir
     )
     monkeypatch_module.setattr(
-        "app.forecasting.ensemble.stacking.ARTIFACTS_DIR", e2e_artifacts_dir
+        "app.forecasting.constants.ARTIFACTS_DIR", e2e_artifacts_dir
     )
     monkeypatch_module.setattr(
-        "app.forecasting.ensemble.conformal.ARTIFACTS_DIR", e2e_artifacts_dir
+        "app.forecasting.ensemble.segment_artifacts.ARTIFACTS_DIR", e2e_artifacts_dir
     )
     os.makedirs(e2e_artifacts_dir, exist_ok=True)
 

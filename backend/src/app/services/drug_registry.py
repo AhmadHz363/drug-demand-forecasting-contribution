@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import date, timedelta
 from typing import Optional
 
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.cold_start.graduation import decide_stage, get_observation_count
 from app.models.drug import Drug
 from app.models.drug_receipt import DrugReceipt
 from app.services.category_registry import attach_category_ids, upsert_categories_from_receipt_rows
+from app.services.demand_aggregation import load_demand_series_from_receipts
 
 
 def upsert_drugs_from_receipt_rows(
@@ -116,3 +119,81 @@ def search_drugs(
         .all()
     )
     return rows, total
+
+
+def get_drug_by_code(db_session: Session, drug_code: str) -> Drug | None:
+    """Return the registry row for a drug code, if present."""
+    normalized = drug_code.strip()
+    if not normalized:
+        return None
+    return (
+        db_session.query(Drug)
+        .filter(Drug.drug_code == normalized)
+        .one_or_none()
+    )
+
+
+def get_drug_detail(
+    db_session: Session,
+    drug_code: str,
+    *,
+    lookback_days: int = 365,
+) -> dict | None:
+    """Aggregate registry metadata, receipt stats, and recent demand history."""
+    drug = get_drug_by_code(db_session, drug_code)
+    if drug is None:
+        return None
+
+    stats = (
+        db_session.query(
+            func.coalesce(func.sum(DrugReceipt.quantity), 0.0),
+            func.count(func.distinct(DrugReceipt.receipt_date)),
+            func.min(DrugReceipt.receipt_date),
+            func.max(DrugReceipt.receipt_date),
+            func.count(func.distinct(DrugReceipt.center_syn_id)),
+        )
+        .filter(DrugReceipt.drug_code == drug.drug_code)
+        .one()
+    )
+
+    total_quantity = float(stats[0] or 0.0)
+    distinct_receipt_days = int(stats[1] or 0)
+    first_receipt_date = stats[2]
+    last_receipt_date = stats[3]
+    center_count = int(stats[4] or 0)
+
+    if first_receipt_date is not None and last_receipt_date is not None:
+        window_start = max(
+            last_receipt_date - timedelta(days=lookback_days - 1),
+            first_receipt_date,
+        )
+        series_rows = load_demand_series_from_receipts(
+            db_session,
+            drug.drug_code,
+            start_date=window_start,
+            end_date=last_receipt_date,
+        )
+    else:
+        series_rows = []
+
+    observation_count = get_observation_count(drug.drug_code, db_session)
+    avg_daily_quantity = (
+        total_quantity / distinct_receipt_days if distinct_receipt_days > 0 else None
+    )
+
+    return {
+        "drug": drug,
+        "total_quantity": total_quantity,
+        "distinct_receipt_days": distinct_receipt_days,
+        "first_receipt_date": first_receipt_date,
+        "last_receipt_date": last_receipt_date,
+        "center_count": center_count,
+        "avg_daily_quantity": avg_daily_quantity,
+        "observation_count": observation_count,
+        "graduation_stage": decide_stage(observation_count),
+        "lookback_days": lookback_days,
+        "demand_series": [
+            {"date": demand_date, "quantity": quantity}
+            for demand_date, quantity in series_rows
+        ],
+    }

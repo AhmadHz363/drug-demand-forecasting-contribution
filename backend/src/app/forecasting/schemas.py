@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -31,6 +31,15 @@ class DailyForecastPoint(BaseModel):
     p50: float
     p90: float
     p95: Optional[float] = None
+    recommended_quantity: Optional[float] = Field(
+        default=None,
+        description="Criticality-aware stocking target (newsvendor operating quantile).",
+    )
+
+
+class HistoryPoint(BaseModel):
+    date: date
+    quantity: float
 
 
 class ShapFeature(BaseModel):
@@ -50,16 +59,39 @@ class ModelWeightBreakdown(BaseModel):
     tft: float
 
 
+class InferenceHealth(BaseModel):
+    """Paths used during ensemble inference — for monitoring fallback rates."""
+
+    demand_segment: str
+    used_stacking: bool
+    used_conformal: bool
+    used_spread_fallback: bool
+
+
 class ForecastResponse(BaseModel):
     drug_code: str
     center_syn_id: Optional[str]
     horizon_days: int
     model_weights: ModelWeightBreakdown
     forecast: list[DailyForecastPoint]
+    history: list[HistoryPoint] = Field(default_factory=list)
     shap_features: Optional[list[ShapFeature]] = None
     attention_weights: Optional[list[AttentionWeight]] = None
     uncertainty_note: str
     smape_last_validation: Optional[float] = None
+    ven_class: Optional[str] = Field(
+        default=None,
+        description="VEN criticality class (V/E/N) from drug catalog.",
+    )
+    operating_quantile: Optional[float] = Field(
+        default=None,
+        description="Newsvendor critical fractile used for stocking recommendations.",
+    )
+    recommended_quantity_total: Optional[float] = Field(
+        default=None,
+        description="Sum of per-day recommended quantities over the forecast horizon.",
+    )
+    inference_health: Optional[InferenceHealth] = None
     error: Optional[str] = None
 
 
@@ -69,12 +101,49 @@ class BatchForecastRequest(BaseModel):
     include_shap: bool = False
 
 
+class DrugQualitySummary(BaseModel):
+    drug_code: str
+    status: str
+    reasons: list[str] = Field(default_factory=list)
+
+
 class TrainStatusResponse(BaseModel):
     status: str
+    training_run_id: str = ""
     drugs_trained: int
     models_trained: list[str]
     smape_summary: dict[str, float]
     artifacts_saved: list[str]
+    skipped_drugs: list[DrugQualitySummary] = Field(default_factory=list)
+    flagged_drugs: list[DrugQualitySummary] = Field(default_factory=list)
+    drift_alerts: list[str] = Field(
+        default_factory=list,
+        description="Drugs whose metrics degraded vs the prior training run.",
+    )
+
+
+class ModelPerformanceRow(BaseModel):
+    drug_code: str
+    model_name: str
+    smape: float
+    mase: Optional[float] = None
+    coverage_90: float
+    demand_segment: Optional[str] = None
+    data_quality_status: Optional[str] = None
+    training_run_id: Optional[str] = None
+    weight_sarima: Optional[float] = None
+    weight_lgbm: Optional[float] = None
+    weight_tft: Optional[float] = None
+    weights_as_of: Optional[datetime] = None
+    smape_drift_pct: Optional[float] = None
+    mase_drift_pct: Optional[float] = None
+    drift_detected: bool = False
+    evaluated_at: datetime
+
+
+class PerformanceMonitoringResponse(BaseModel):
+    items: list[ModelPerformanceRow]
+    total: int
 
 
 class ReceiptDrugOption(BaseModel):
@@ -133,7 +202,16 @@ class HoldoutMetrics(BaseModel):
     mae: float
     coverage_90: float
     accuracy_pct: float = Field(
-        description="Forecast accuracy score (0–100%), derived from sMAPE.",
+        description="Secondary score from sMAPE (0–100%); may distort near-zero demand.",
+    )
+    mase: float = 0.0
+    rmsse: float = 0.0
+    pinball_p10: float = 0.0
+    pinball_p50: float = 0.0
+    pinball_p90: float = 0.0
+    accuracy_skill_pct: float = Field(
+        default=0.0,
+        description="Primary skill score: max(0, (1−MASE)×100) vs weekly seasonal naive.",
     )
 
 
@@ -156,8 +234,14 @@ class HoldoutResponse(BaseModel):
     models_evaluated: list[str]
     model_errors: dict[str, str]
     metrics: dict[str, HoldoutMetrics]
+    demand_segment: str = Field(
+        description="Syntetos–Boylan demand pattern segment for this drug.",
+    )
     total_accuracy_pct: float = Field(
-        description="Ensemble total forecast accuracy (0–100%) over the hold-out window.",
+        description="Ensemble sMAPE-derived accuracy (0–100%) over the hold-out window.",
+    )
+    total_accuracy_skill_pct: float = Field(
+        description="Ensemble MASE skill score (0–100%) vs weekly seasonal naive.",
     )
     model_weights: ModelWeightBreakdown
     series: list[HoldoutSeriesPoint]

@@ -5,6 +5,7 @@ import { Activity, LineChart } from "lucide-react";
 
 import { ForecastRequestForm } from "@/components/forecasting/ForecastRequestForm";
 import { HoldoutValidationPanel } from "@/components/forecasting/HoldoutValidationPanel";
+import { ModelHealthMonitoringPanel } from "@/components/forecasting/ModelHealthMonitoringPanel";
 import { ForecastingErrorPanel } from "@/components/forecasting/ForecastingErrorPanel";
 import { ForecastingResultsTabs } from "@/components/forecasting/ForecastingResultsTabs";
 import { ForecastingTrainingControls } from "@/components/forecasting/ForecastingTrainingControls";
@@ -80,6 +81,8 @@ export function ForecastingDashboard() {
         <ForecastingTrainingControls onModelsReady={setModelsReady} />
 
         <HoldoutValidationPanel />
+
+        <ModelHealthMonitoringPanel />
 
         {error && !isLoading && <ForecastingErrorPanel error={error} />}
 

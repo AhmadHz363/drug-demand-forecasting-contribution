@@ -109,7 +109,9 @@ export function ForecastingResultsTabs({
           </div>
         )}
 
-        {activeTab === "forecast" && <ForecastChart forecast={data.forecast} embedded />}
+        {activeTab === "forecast" && (
+          <ForecastChart forecast={data.forecast} history={data.history} embedded />
+        )}
         {activeTab === "weights" && (
           <ModelWeightsPanel weights={data.model_weights} embedded />
         )}
