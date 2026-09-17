@@ -3,6 +3,7 @@ import type {
   AuthUser,
   ColdStartPredictRequest,
   ColdStartPredictResponse,
+  ColdStartStatusResponse,
   ForecastRequest,
   ForecastResponse,
   HoldoutDateSuggestions,
@@ -34,6 +35,7 @@ function backendOrigin(): string {
 }
 
 const TRAINING_PATHS = new Set([
+  "/cold-start/train-cameo",
   "/cold-start/train-embedder",
   "/cold-start/train-maml",
   "/forecasting/train",
@@ -141,8 +143,17 @@ export async function predictColdStart(
   return res.json();
 }
 
-export async function trainEmbedder(): Promise<TrainResponse> {
-  const path = "/cold-start/train-embedder";
+export async function fetchColdStartStatus(): Promise<ColdStartStatusResponse> {
+  const path = "/cold-start/status";
+  const res = await backendFetch(path);
+  if (!res.ok) {
+    throw new Error(await parseError(res, path));
+  }
+  return res.json();
+}
+
+export async function trainCameo(): Promise<TrainResponse> {
+  const path = "/cold-start/train-cameo";
   const res = await backendFetch(path, { method: "POST" });
   if (!res.ok) {
     throw new Error(await parseError(res, path));
@@ -150,13 +161,12 @@ export async function trainEmbedder(): Promise<TrainResponse> {
   return res.json();
 }
 
+export async function trainEmbedder(): Promise<TrainResponse> {
+  return trainCameo();
+}
+
 export async function trainMaml(): Promise<TrainResponse> {
-  const path = "/cold-start/train-maml";
-  const res = await backendFetch(path, { method: "POST" });
-  if (!res.ok) {
-    throw new Error(await parseError(res, path));
-  }
-  return res.json();
+  return trainCameo();
 }
 
 export async function trainForecasting(

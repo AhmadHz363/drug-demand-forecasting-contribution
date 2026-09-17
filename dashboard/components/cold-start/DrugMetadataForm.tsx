@@ -4,10 +4,12 @@ import { useState } from "react";
 import { Loader2, RotateCcw, Sparkles } from "lucide-react";
 
 import {
+  AVAILABILITY_OPTIONS,
   DEFAULT_DRUG_METADATA,
-  PHARMA_FORMS,
+  DOSAGE_FORMS,
+  DRUG_CLASSES,
+  PREGNANCY_CATEGORIES,
   ROUTES,
-  THERAPEUTIC_CLASSES,
 } from "@/lib/constants";
 import type {
   ColdStartPredictRequest,
@@ -28,11 +30,10 @@ import {
 interface DrugMetadataFormProps {
   onSubmit: (request: ColdStartPredictRequest) => void;
   isLoading: boolean;
+  disabled?: boolean;
 }
 
-const PRICE_TIER_LABELS = ["Budget", "Low", "Mid", "High", "Premium"] as const;
-
-export function DrugMetadataForm({ onSubmit, isLoading }: DrugMetadataFormProps) {
+export function DrugMetadataForm({ onSubmit, isLoading, disabled = false }: DrugMetadataFormProps) {
   const [metadata, setMetadata] = useState<DrugMetadataInput>(DEFAULT_DRUG_METADATA);
   const [horizon, setHorizon] = useState(7);
   const [showPharmacist, setShowPharmacist] = useState(false);
@@ -83,7 +84,7 @@ export function DrugMetadataForm({ onSubmit, isLoading }: DrugMetadataFormProps)
       <PanelHeader
         step={2}
         title="New drug configuration"
-        description="Describe the drug you want to forecast. Defaults are pre-filled with a sample antibiotic."
+        description="Enter CAMEO attribute fields (same as the real-data cold-start notebook)."
         action={
           <button
             type="button"
@@ -97,11 +98,7 @@ export function DrugMetadataForm({ onSubmit, isLoading }: DrugMetadataFormProps)
       />
       <PanelBody>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <CollapsibleSection
-            title="Basic information"
-            subtitle="Drug identity and therapeutic profile"
-            defaultOpen
-          >
+          <CollapsibleSection title="Identity" subtitle="Hospital code and product name" defaultOpen>
             <div className="grid gap-4 sm:grid-cols-2">
               <FormField label="Drug code" required>
                 <input
@@ -112,7 +109,7 @@ export function DrugMetadataForm({ onSubmit, isLoading }: DrugMetadataFormProps)
                   className={inputClass}
                 />
               </FormField>
-              <FormField label="Drug name" required>
+              <FormField label="Drug name (ARTICLE)" required>
                 <input
                   type="text"
                   value={metadata.drug_name}
@@ -121,40 +118,53 @@ export function DrugMetadataForm({ onSubmit, isLoading }: DrugMetadataFormProps)
                   className={inputClass}
                 />
               </FormField>
-              <FormField label="Therapeutic class">
-                <select
-                  value={metadata.therapeutic_class}
-                  onChange={(e) => update("therapeutic_class", e.target.value)}
-                  className={selectClass}
-                >
-                  {THERAPEUTIC_CLASSES.map((c) => (
-                    <option key={c} value={c}>
-                      {c.charAt(0).toUpperCase() + c.slice(1)}
-                    </option>
-                  ))}
-                </select>
-              </FormField>
-              <FormField label="ATC category" hint="WHO anatomical classification, e.g. J01 for antibacterials">
+              <FormField label="Generic name">
                 <input
                   type="text"
-                  placeholder="J01"
-                  value={metadata.atc_category}
-                  onChange={(e) => update("atc_category", e.target.value)}
+                  value={metadata.generic_name ?? ""}
+                  onChange={(e) => update("generic_name", e.target.value)}
                   className={inputClass}
                 />
               </FormField>
-              <FormField label="Pharmaceutical form">
+            </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Pharmacological attributes" subtitle="Used for metric-learning analog search" defaultOpen>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField label="Drug class">
                 <select
-                  value={metadata.pharmaceutical_form}
-                  onChange={(e) => update("pharmaceutical_form", e.target.value)}
+                  value={metadata.drug_class}
+                  onChange={(e) => update("drug_class", e.target.value)}
                   className={selectClass}
                 >
-                  {PHARMA_FORMS.map((f) => (
-                    <option key={f} value={f}>
-                      {f.charAt(0).toUpperCase() + f.slice(1)}
+                  {DRUG_CLASSES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
                     </option>
                   ))}
                 </select>
+              </FormField>
+              <FormField label="Dosage form">
+                <select
+                  value={metadata.dosage_form}
+                  onChange={(e) => update("dosage_form", e.target.value)}
+                  className={selectClass}
+                >
+                  {DOSAGE_FORMS.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+              <FormField label="Strength">
+                <input
+                  type="text"
+                  value={metadata.strength}
+                  onChange={(e) => update("strength", e.target.value)}
+                  placeholder="e.g. 500 mg"
+                  className={inputClass}
+                />
               </FormField>
               <FormField label="Route of administration">
                 <select
@@ -164,7 +174,33 @@ export function DrugMetadataForm({ onSubmit, isLoading }: DrugMetadataFormProps)
                 >
                   {ROUTES.map((r) => (
                     <option key={r} value={r}>
-                      {r.toUpperCase()}
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+              <FormField label="Pregnancy category">
+                <select
+                  value={metadata.pregnancy_category ?? "MISSING"}
+                  onChange={(e) => update("pregnancy_category", e.target.value)}
+                  className={selectClass}
+                >
+                  {PREGNANCY_CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+              <FormField label="Availability">
+                <select
+                  value={metadata.availability ?? "Prescription"}
+                  onChange={(e) => update("availability", e.target.value)}
+                  className={selectClass}
+                >
+                  {AVAILABILITY_OPTIONS.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
                     </option>
                   ))}
                 </select>
@@ -172,101 +208,43 @@ export function DrugMetadataForm({ onSubmit, isLoading }: DrugMetadataFormProps)
             </div>
           </CollapsibleSection>
 
-          <CollapsibleSection
-            title="Priority & classification"
-            subtitle="VEN criticality, ABC economic value, and cost tier"
-          >
-            <div className="space-y-4">
-              <FormField
-                label="VEN class"
-                hint="Vital · Essential · Non-essential — indicates clinical criticality"
-              >
-                <RadioGroup
-                  options={[
-                    { value: "V", label: "Vital", sub: "Critical", color: "border-red-500 bg-red-50 text-red-700 ring-red-200" },
-                    { value: "E", label: "Essential", sub: "Important", color: "border-amber-500 bg-amber-50 text-amber-800 ring-amber-200" },
-                    { value: "N", label: "Non-essential", sub: "Routine", color: "border-emerald-500 bg-emerald-50 text-emerald-800 ring-emerald-200" },
-                  ]}
-                  value={metadata.ven_class}
-                  onChange={(v) => update("ven_class", v as DrugMetadataInput["ven_class"])}
+          <CollapsibleSection title="Clinical text (optional)" subtitle="Parsed into complexity counts for embedding">
+            <div className="grid gap-4">
+              <FormField label="Indications">
+                <textarea
+                  value={metadata.indications ?? ""}
+                  onChange={(e) => update("indications", e.target.value)}
+                  rows={2}
+                  className={inputClass}
                 />
               </FormField>
-              <FormField
-                label="ABC class"
-                hint="A = high value · B = medium · C = low consumption value"
-              >
-                <RadioGroup
-                  options={[
-                    { value: "A", label: "Class A", sub: "High value", color: "border-violet-500 bg-violet-50 text-violet-800 ring-violet-200" },
-                    { value: "B", label: "Class B", sub: "Medium", color: "border-blue-500 bg-blue-50 text-blue-800 ring-blue-200" },
-                    { value: "C", label: "Class C", sub: "Low value", color: "border-slate-400 bg-slate-50 text-slate-700 ring-slate-200" },
-                  ]}
-                  value={metadata.abc_class}
-                  onChange={(v) => update("abc_class", v as DrugMetadataInput["abc_class"])}
+              <FormField label="Side effects">
+                <textarea
+                  value={metadata.side_effects ?? ""}
+                  onChange={(e) => update("side_effects", e.target.value)}
+                  rows={2}
+                  className={inputClass}
                 />
               </FormField>
-              <FormField label="Unit price tier">
-                <div className="flex flex-wrap gap-2">
-                  {([1, 2, 3, 4, 5] as const).map((tier) => (
-                    <button
-                      key={tier}
-                      type="button"
-                      onClick={() => update("unit_price_tier", tier)}
-                      className={`flex min-w-[4.5rem] flex-col items-center rounded-xl border px-3 py-2 text-center transition ${
-                        metadata.unit_price_tier === tier
-                          ? "border-blue-600 bg-blue-600 text-white shadow-sm"
-                          : "border-slate-200 bg-white text-slate-600 hover:border-blue-300"
-                      }`}
-                    >
-                      <span className="text-sm font-bold">{tier}</span>
-                      <span className="text-[10px] opacity-80">{PRICE_TIER_LABELS[tier - 1]}</span>
-                    </button>
-                  ))}
-                </div>
+              <FormField label="Contraindications">
+                <textarea
+                  value={metadata.contraindications ?? ""}
+                  onChange={(e) => update("contraindications", e.target.value)}
+                  rows={2}
+                  className={inputClass}
+                />
               </FormField>
             </div>
           </CollapsibleSection>
 
-          <CollapsibleSection
-            title="Storage & compliance"
-            subtitle="Handling requirements and shelf life"
-          >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Toggle
-                label="Requires refrigeration"
-                checked={metadata.requires_refrigeration}
-                onChange={(v) => update("requires_refrigeration", v)}
-              />
-              <Toggle
-                label="Controlled substance"
-                checked={metadata.is_controlled_substance}
-                onChange={(v) => update("is_controlled_substance", v)}
-              />
-              <div className="sm:col-span-2">
-                <FormField label="Average shelf life" hint="Typical shelf life in days (minimum 30)">
-                  <input
-                    type="number"
-                    min={30}
-                    value={metadata.average_shelf_life_days}
-                    onChange={(e) => update("average_shelf_life_days", Number(e.target.value))}
-                    className={`${inputClass} sm:max-w-xs`}
-                  />
-                </FormField>
-              </div>
-            </div>
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            title="Forecast options"
-            subtitle="Horizon length and optional pharmacist input"
-          >
+          <CollapsibleSection title="Forecast options" subtitle="Horizon and optional pharmacist input">
             <div className="space-y-4">
               <FormField label={`Forecast horizon — ${horizon} day${horizon === 1 ? "" : "s"}`}>
                 <div className="flex items-center gap-4">
                   <input
                     type="range"
                     min={1}
-                    max={30}
+                    max={140}
                     value={horizon}
                     onChange={(e) => setHorizon(Number(e.target.value))}
                     className="flex-1"
@@ -340,13 +318,13 @@ export function DrugMetadataForm({ onSubmit, isLoading }: DrugMetadataFormProps)
 
           <button
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || disabled}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60"
           >
             {isLoading ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Running prediction…
+                Running CAMEO…
               </>
             ) : (
               <>
@@ -358,67 +336,5 @@ export function DrugMetadataForm({ onSubmit, isLoading }: DrugMetadataFormProps)
         </form>
       </PanelBody>
     </Panel>
-  );
-}
-
-function RadioGroup({
-  options,
-  value,
-  onChange,
-}: {
-  options: { value: string; label: string; sub: string; color: string }[];
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="grid gap-2 sm:grid-cols-3">
-      {options.map((opt) => {
-        const selected = value === opt.value;
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => onChange(opt.value)}
-            className={`rounded-xl border px-3 py-2.5 text-left transition ring-1 ${
-              selected ? opt.color : "border-slate-200 bg-white text-slate-500 ring-transparent hover:border-slate-300"
-            }`}
-          >
-            <span className="block text-sm font-semibold">{opt.label}</span>
-            <span className="block text-[11px] opacity-75">{opt.sub}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function Toggle({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <label className="flex cursor-pointer items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3">
-      <span className="text-sm font-medium text-slate-700">{label}</span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        className={`relative h-6 w-11 rounded-full transition ${
-          checked ? "bg-blue-600" : "bg-slate-300"
-        }`}
-      >
-        <span
-          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${
-            checked ? "left-5" : "left-0.5"
-          }`}
-        />
-      </button>
-    </label>
   );
 }

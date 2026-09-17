@@ -1,16 +1,16 @@
 export interface DrugMetadataInput {
   drug_code: string;
   drug_name: string;
-  therapeutic_class: string;
-  atc_category: string;
-  pharmaceutical_form: string;
-  ven_class: "V" | "E" | "N";
-  abc_class: "A" | "B" | "C";
-  unit_price_tier: 1 | 2 | 3 | 4 | 5;
-  requires_refrigeration: boolean;
-  is_controlled_substance: boolean;
-  average_shelf_life_days: number;
+  generic_name?: string;
+  drug_class: string;
+  dosage_form: string;
+  strength: string;
   route_of_administration: string;
+  pregnancy_category?: string;
+  availability?: string;
+  indications?: string;
+  side_effects?: string;
+  contraindications?: string;
 }
 
 export interface PharmacistEstimate {
@@ -53,6 +53,8 @@ export interface ColdStartPredictResponse {
   similarity_scores: number[];
   forecast: DailyForecast[];
   uncertainty_note: string;
+  conformal_half_width_weekly?: number | null;
+  drift_alarms?: number;
 }
 
 export interface TrainResponse {
@@ -60,6 +62,40 @@ export interface TrainResponse {
   drugs_trained_on?: number;
   tasks_trained_on?: number;
   artifact_path: string;
+  accuracy_summary?: CameoAccuracySummary | null;
+}
+
+export interface CameoPerDrugAccuracy {
+  drug_code: string;
+  sb_class?: string | null;
+  accuracy_pct?: number | null;
+  wape?: number | null;
+}
+
+export interface CameoAccuracySummary {
+  n_historical_library_drugs: number;
+  n_coldstart_test_drugs: number;
+  forecast_horizon_weeks: number;
+  pooled_accuracy_pct: Record<string, number>;
+  median_accuracy_pct: Record<string, number | null>;
+  win_rate_pct: Record<string, number>;
+  per_sb_class_pooled_accuracy_pct: Record<string, number>;
+  empirical_conformal_coverage_pct?: number | null;
+  conformal_half_width_weekly?: number | null;
+  cameo_vs_analogous_wape_improvement_pct?: number | null;
+  smooth_pooled_accuracy_pct?: number | null;
+  operational_pooled_accuracy_pct?: number | null;
+  non_lumpy_operational_pooled_accuracy_pct?: number | null;
+  zero_demand_test_drugs?: number;
+  per_drug: CameoPerDrugAccuracy[];
+  note?: string | null;
+}
+
+export interface ColdStartStatusResponse {
+  model_ready: boolean;
+  drugs_trained_on?: number | null;
+  trained_at?: string | null;
+  accuracy_summary?: CameoAccuracySummary | null;
 }
 
 export interface ForecastRequest {

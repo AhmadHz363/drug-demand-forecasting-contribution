@@ -1,61 +1,76 @@
 import type { DrugMetadataInput, GraduationStage } from "./types";
 
-export const THERAPEUTIC_CLASSES = [
-  "antibiotic",
-  "analgesic",
-  "antifungal",
-  "antiviral",
-  "anticoagulant",
-  "antihypertensive",
-  "antidiabetic",
-  "antiemetic",
-  "bronchodilator",
-  "corticosteroid",
-  "diuretic",
-  "immunosuppressant",
+export const DRUG_CLASSES = [
+  "ARB",
+  "ACE inhibitor",
+  "Beta blocker",
+  "Calcium channel blocker",
+  "Antibiotic",
+  "Analgesic",
+  "Anticoagulant",
+  "Antidiabetic",
+  "Corticosteroid",
   "other",
 ] as const;
 
-export const PHARMA_FORMS = [
-  "tablet",
-  "capsule",
-  "injection",
-  "syrup",
-  "suspension",
-  "cream",
-  "ointment",
-  "patch",
-  "inhaler",
-  "suppository",
-  "drops",
+export const DOSAGE_FORMS = [
+  "Tablet",
+  "Capsule",
+  "Injection",
+  "Syrup",
+  "Suspension",
+  "Cream",
+  "Ointment",
+  "Inhaler",
+  "Drops",
   "other",
 ] as const;
 
 export const ROUTES = [
-  "oral",
-  "iv",
-  "im",
-  "sc",
-  "topical",
-  "inhalation",
-  "rectal",
-  "ophthalmic",
+  "Oral",
+  "IV",
+  "IM",
+  "SC",
+  "Topical",
+  "Inhalation",
+  "Rectal",
+  "Ophthalmic",
   "other",
 ] as const;
+
+export const PREGNANCY_CATEGORIES = [
+  "Contraindicated (not allowed)",
+  "Use with caution",
+  "Generally safe",
+  "Unknown",
+  "MISSING",
+] as const;
+
+export const AVAILABILITY_OPTIONS = [
+  "Prescription",
+  "OTC",
+  "Hospital use only",
+  "MISSING",
+] as const;
+
+/** @deprecated use DRUG_CLASSES — kept for any stale imports */
+export const THERAPEUTIC_CLASSES = DRUG_CLASSES;
+/** @deprecated use DOSAGE_FORMS */
+export const PHARMA_FORMS = DOSAGE_FORMS;
 
 export const DEFAULT_DRUG_METADATA: DrugMetadataInput = {
   drug_code: "NEW-001",
   drug_name: "Ceftriaxone 1g Injection",
-  therapeutic_class: "antibiotic",
-  atc_category: "J01",
-  pharmaceutical_form: "injection",
-  ven_class: "V",
-  abc_class: "A",
-  unit_price_tier: 4,
-  requires_refrigeration: false,
-  is_controlled_substance: false,
-  average_shelf_life_days: 730,
-  route_of_administration: "iv",
+  generic_name: "Ceftriaxone",
+  drug_class: "Antibiotic",
+  dosage_form: "Injection",
+  strength: "1 g",
+  route_of_administration: "IV",
+  pregnancy_category: "Use with caution",
+  availability: "Prescription",
+  indications: "Severe bacterial infections",
+  side_effects: "Diarrhea; rash",
+  contraindications: "Hypersensitivity to cephalosporins",
 };
 
 export const COLD_START_ONLY_BELOW = 4;
@@ -79,29 +94,3 @@ export function coldStartRemainingPercent(observationCount: number): number {
   const alpha = (observationCount - COLD_START_ONLY_BELOW) / (BLEND_UNTIL - COLD_START_ONLY_BELOW);
   return Math.round((1 - alpha) * 100);
 }
-
-export const MAX_FORECAST_HORIZON = 30;
-
-export const SHIELD_XR_MODEL = "shield_xr" as const;
-
-/** Legacy ensemble model ids — kept for API response compatibility. */
-export const FORECAST_MODELS = ["sarima", "lgbm", "classical"] as const;
-
-export type ForecastModelId = (typeof FORECAST_MODELS)[number];
-
-export const FORECAST_MODEL_LABELS: Record<ForecastModelId, string> = {
-  sarima: "SARIMA",
-  lgbm: "LightGBM",
-  classical: "Classical",
-};
-
-export const EXAMPLE_FORECAST_DRUGS = [
-  { code: "E2E-AMOX", name: "Amoxicillin 500mg" },
-  { code: "E2E-PARA", name: "Paracetamol 500mg" },
-  { code: "E2E-METF", name: "Metformin 850mg" },
-  { code: "E2E-WARF", name: "Warfarin 5mg" },
-  { code: "E2E-SALB", name: "Salbutamol inhaler" },
-  { code: "E2E-OMEP", name: "Omeprazole 20mg" },
-] as const;
-
-export const DEFAULT_FORECAST_DRUG = EXAMPLE_FORECAST_DRUGS[0].code;

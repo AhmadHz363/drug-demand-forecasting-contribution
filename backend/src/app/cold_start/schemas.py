@@ -3,26 +3,26 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
 
 class DrugMetadataInput(BaseModel):
-    """Metadata fields required to embed a drug (maps to drug_catalog columns)."""
+    """CAMEO attribute vector — mirrors notebook Section 6 fields."""
 
     drug_code: str
     drug_name: str
-    therapeutic_class: str
-    atc_category: str
-    pharmaceutical_form: str
-    ven_class: str
-    abc_class: str
-    unit_price_tier: int = Field(..., ge=1, le=5)
-    requires_refrigeration: bool
-    is_controlled_substance: bool
-    average_shelf_life_days: int = Field(..., gt=0)
+    generic_name: Optional[str] = None
+    drug_class: str
+    dosage_form: str
+    strength: str
     route_of_administration: str
+    pregnancy_category: str = "MISSING"
+    availability: str = "Prescription"
+    indications: str = ""
+    side_effects: str = ""
+    contraindications: str = ""
 
 
 class PharmacistEstimate(BaseModel):
@@ -33,7 +33,7 @@ class PharmacistEstimate(BaseModel):
 class ColdStartPredictRequest(BaseModel):
     drug_metadata: DrugMetadataInput
     pharmacist_estimate: Optional[PharmacistEstimate] = None
-    forecast_horizon_days: int = Field(default=7, ge=1, le=30)
+    forecast_horizon_days: int = Field(default=7, ge=1, le=140)
 
 
 class DailyForecast(BaseModel):
@@ -52,3 +52,38 @@ class ColdStartPredictResponse(BaseModel):
     similarity_scores: List[float]
     forecast: List[DailyForecast]
     uncertainty_note: str
+    conformal_half_width_weekly: Optional[float] = None
+    drift_alarms: int = 0
+
+
+class CameoPerDrugAccuracy(BaseModel):
+    drug_code: str
+    sb_class: Optional[str] = None
+    accuracy_pct: Optional[float] = None
+    wape: Optional[float] = None
+
+
+class CameoAccuracySummary(BaseModel):
+    n_historical_library_drugs: int = 0
+    n_coldstart_test_drugs: int = 0
+    forecast_horizon_weeks: int = 20
+    pooled_accuracy_pct: Dict[str, float] = Field(default_factory=dict)
+    median_accuracy_pct: Dict[str, Optional[float]] = Field(default_factory=dict)
+    win_rate_pct: Dict[str, float] = Field(default_factory=dict)
+    per_sb_class_pooled_accuracy_pct: Dict[str, float] = Field(default_factory=dict)
+    empirical_conformal_coverage_pct: Optional[float] = None
+    conformal_half_width_weekly: Optional[float] = None
+    cameo_vs_analogous_wape_improvement_pct: Optional[float] = None
+    smooth_pooled_accuracy_pct: Optional[float] = None
+    operational_pooled_accuracy_pct: Optional[float] = None
+    non_lumpy_operational_pooled_accuracy_pct: Optional[float] = None
+    zero_demand_test_drugs: int = 0
+    per_drug: List[CameoPerDrugAccuracy] = Field(default_factory=list)
+    note: Optional[str] = None
+
+
+class ColdStartStatusResponse(BaseModel):
+    model_ready: bool
+    drugs_trained_on: Optional[int] = None
+    trained_at: Optional[str] = None
+    accuracy_summary: Optional[CameoAccuracySummary] = None

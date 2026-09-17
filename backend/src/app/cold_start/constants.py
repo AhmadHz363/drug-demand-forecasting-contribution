@@ -34,7 +34,19 @@ MAML_HIDDEN_DIM = 32
 MAML_SEQUENCE_LEN = 14
 MAML_FORECAST_HORIZON = 7
 
-# Graduation thresholds
+# CAMEO (notebook defaults + accuracy tuning for intermittent launch demand)
+CAMEO_TOPK = 5
+CAMEO_EPOCHS = 800
+CAMEO_SEED = 1
+CAMEO_DRIFT_HAZARD = 1 / 25
+CAMEO_DRIFT_THRESHOLD = 0.6
+CAMEO_ONLINE_TAU = 1.5
+CAMEO_CONFORMAL_ALPHA = 0.1
+CAMEO_LAUNCH_WEEKS = 8
+CAMEO_SHAPE_RERANK_WEIGHT = 0.5
+CAMEO_ANALOG_CANDIDATE_MULT = 3
+
+# Graduation thresholds (daily observations from enriched demand panel)
 COLD_START_ONLY_BELOW = 4
 BLEND_UNTIL = 12
 
