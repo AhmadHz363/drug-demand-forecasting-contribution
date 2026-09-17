@@ -113,7 +113,7 @@ def search_drugs(
 
     total = base.with_entities(func.count(Drug.id)).scalar() or 0
     rows = (
-        base.order_by(Drug.drug_code.asc())
+        base.order_by(Drug.receipt_count.desc(), Drug.drug_code.asc())
         .offset(max(page - 1, 0) * page_size)
         .limit(page_size)
         .all()

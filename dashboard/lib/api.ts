@@ -8,6 +8,7 @@ import type {
   HoldoutDateSuggestions,
   HoldoutResponse,
   HoldoutValidationRequest,
+  OverviewResponse,
   PaginatedDrugCodeSearchResponse,
   PaginatedDrugListResponse,
   PaginatedCategoryListResponse,
@@ -78,6 +79,15 @@ async function backendFetch(path: string, init?: RequestInit): Promise<Response>
       "Could not reach the API. Ensure the backend is running on port 8000.",
     );
   }
+}
+
+export async function fetchOverview(): Promise<OverviewResponse> {
+  const path = "/overview";
+  const res = await backendFetch(path);
+  if (!res.ok) {
+    throw new Error(await parseError(res, path));
+  }
+  return res.json();
 }
 
 export async function login(payload: LoginPayload): Promise<LoginResponse> {

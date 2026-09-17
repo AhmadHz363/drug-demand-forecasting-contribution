@@ -33,6 +33,7 @@ from app.forecasting.ensemble.segment_artifacts import (
 from app.forecasting.ensemble.stacking import StackingMetaLearner
 from app.forecasting.evaluation_metrics import (
     accuracy_skill_from_mase,
+    finite_mase_or_none,
     mase,
     mean_pinball_loss,
     rmsse,
@@ -137,6 +138,14 @@ class TestIntermittentAwareMetrics:
         predicted = actuals + 4.0
         assert rmsse(actuals, predicted) > 0.0
         assert mean_pinball_loss(actuals, predicted, 0.5) > 0.0
+
+    def test_infinite_mase_not_persisted(self):
+        actuals = np.zeros(14)
+        predicted = np.ones(14)
+        mase_val = mase(actuals, predicted)
+        assert mase_val == float("inf")
+        assert finite_mase_or_none(mase_val) is None
+        assert finite_mase_or_none(None) is None
 
 
 class TestWalkForwardDefaults:

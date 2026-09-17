@@ -1,10 +1,41 @@
+# ── Core API & database ──────────────────────────────────────────────────────
 alembic==1.13.2
 fastapi==0.115.6
-openpyxl==3.1.5
-pandas==2.2.3
-psycopg[binary]==3.2.6
 pydantic==2.10.4
 pydantic-settings==2.7.0
 python-multipart==0.0.20
 sqlalchemy==2.0.36
 uvicorn[standard]==0.34.0
+psycopg[binary]==3.2.6
+
+# ── Auth ───────────────────────────────────────────────────────────────────────
+bcrypt>=4.0.0
+python-jose[cryptography]>=3.3.0
+email-validator>=2.0.0
+
+# ── Data ingestion & processing ────────────────────────────────────────────────
+openpyxl==3.1.5
+pandas==2.2.3
+numpy>=1.26.0,<3.0.0
+
+# ── Forecasting — statistical & ML models ─────────────────────────────────────
+scipy>=1.11.0
+statsmodels>=0.14.0
+scikit-learn>=1.4.0
+lightgbm>=4.0.0
+shap>=0.45.0
+mapie>=0.8.0
+lifelines>=0.27.0
+holidays>=0.40
+
+# ── Forecasting — Temporal Fusion Transformer (PyTorch Lightning) ─────────────
+torch>=2.2.0
+lightning>=2.2.0
+pytorch-forecasting>=1.0.0
+
+# ── Cold start — autoencoder & MAML ───────────────────────────────────────────
+learn2learn>=0.2.0
+
+# ── Testing & development ──────────────────────────────────────────────────────
+pytest>=8.0.0
+httpx>=0.27.0

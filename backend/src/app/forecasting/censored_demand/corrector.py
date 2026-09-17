@@ -112,17 +112,20 @@ def _write_stockout_flags(
     working: pd.DataFrame,
 ) -> None:
     stockout_rows = working.loc[working["is_stockout"].astype(bool)]
-    for _, row in stockout_rows.iterrows():
-        db_session.add(
-            StockoutFlag(
-                drug_code=drug_code,
-                center_syn_id=center_syn_id,
-                flag_date=_flag_date(row["demand_date"]),
-                observed_quantity=0.0,
-                estimated_true_demand=float(row["total_quantity"]),
-                correction_method=str(row.get("correction_method") or "none"),
-            )
+    if stockout_rows.empty:
+        return
+    flags = [
+        StockoutFlag(
+            drug_code=drug_code,
+            center_syn_id=center_syn_id,
+            flag_date=_flag_date(row["demand_date"]),
+            observed_quantity=0.0,
+            estimated_true_demand=float(row["total_quantity"]),
+            correction_method=str(row.get("correction_method") or "none"),
         )
+        for _, row in stockout_rows.iterrows()
+    ]
+    db_session.add_all(flags)
     db_session.flush()
 
 

@@ -3,19 +3,21 @@
 import { useState } from "react";
 import {
   AlertTriangle,
+  BarChart3,
   CheckCircle2,
   ChevronDown,
   RotateCcw,
   XCircle,
 } from "lucide-react";
 
-import { Panel, PanelBody, PanelHeader, StatChip } from "@/components/cold-start/ui";
+import { EmptyState, Panel, PanelBody, PanelHeader, Skeleton, StatChip } from "@/components/cold-start/ui";
 import type { UploadReceiptsResponse } from "@/lib/types";
 
 interface IngestionResultsPanelProps {
   result: UploadReceiptsResponse | null;
   error: string | null;
   fileName: string | null;
+  isUploading: boolean;
   onReset: () => void;
 }
 
@@ -23,6 +25,7 @@ export function IngestionResultsPanel({
   result,
   error,
   fileName,
+  isUploading,
   onReset,
 }: IngestionResultsPanelProps) {
   const [showAllErrors, setShowAllErrors] = useState(false);
@@ -40,20 +43,29 @@ export function IngestionResultsPanel({
         <PanelHeader
           step={2}
           title="Ingestion results"
-          description="Upload a file to see row counts and any validation issues."
+          description={
+            isUploading
+              ? "Processing your upload…"
+              : "Upload a file to see row counts and any validation issues."
+          }
         />
         <PanelBody>
-          <div className="space-y-3" aria-hidden="true">
-            <div className="grid grid-cols-3 gap-3">
-              <div className="shimmer h-16 rounded-xl" />
-              <div className="shimmer h-16 rounded-xl" />
-              <div className="shimmer h-16 rounded-xl" />
+          {isUploading ? (
+            <div className="space-y-3" aria-hidden="true">
+              <div className="grid grid-cols-3 gap-3">
+                <Skeleton className="h-16 rounded-xl" />
+                <Skeleton className="h-16 rounded-xl" />
+                <Skeleton className="h-16 rounded-xl" />
+              </div>
+              <Skeleton className="h-24 rounded-xl" />
             </div>
-            <div className="shimmer h-24 rounded-xl" />
-          </div>
-          <p className="mt-4 text-center text-sm text-slate-500">
-            Results will appear here after ingestion completes.
-          </p>
+          ) : (
+            <EmptyState
+              icon={<BarChart3 className="h-6 w-6" />}
+              title="No ingestion results yet"
+              description="Upload a receipt spreadsheet and start ingestion to see row counts and any validation issues here."
+            />
+          )}
         </PanelBody>
       </Panel>
     );

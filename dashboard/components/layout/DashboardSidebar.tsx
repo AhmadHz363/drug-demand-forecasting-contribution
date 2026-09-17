@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ClipboardList,
+  LayoutDashboard,
   LineChart,
   LogOut,
   Pill,
@@ -15,6 +16,12 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 
 const NAV_ITEMS = [
+  {
+    href: "/",
+    label: "Overview",
+    description: "System-wide KPI snapshot",
+    icon: LayoutDashboard,
+  },
   {
     href: "/data-ingestion",
     label: "Data Ingestion",
@@ -67,7 +74,10 @@ export function DashboardSidebar() {
 
       <nav className="flex-1 space-y-1 p-3" aria-label="Dashboard modules">
         {NAV_ITEMS.map((item) => {
-          const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+          const active =
+            item.href === "/"
+              ? pathname === "/"
+              : pathname === item.href || pathname.startsWith(`${item.href}/`);
           const Icon = item.icon;
 
           return (

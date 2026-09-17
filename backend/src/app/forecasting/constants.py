@@ -43,6 +43,7 @@ LGBM_NUM_LEAVES = 31
 LGBM_EARLY_STOPPING_ROUNDS = 50
 LGBM_VALID_FRACTION = 0.15
 LGBM_RECURSIVE_ANCHOR_WEIGHT = 0.25
+SHAP_MAX_SAMPLE_ROWS = 500  # cap SHAP computation to this many training rows
 
 # ── TFT ───────────────────────────────────────────────────────────────────────
 TFT_HIDDEN_SIZE = 64
