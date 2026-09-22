@@ -86,3 +86,6 @@ next-env.d.ts
 
 # ── Thesis manuscript (keep local only) ───────────────────────────────────────
 thesis-manuscript/
+
+# ── Defence deck (keep local only) ────────────────────────────────────────────
+defence/
