@@ -1,0 +1,44 @@
+{
+  "note": "Snapshot of SHIELD-XR selection coefficients from training_meta.json. LightGBM tree weights stay in gitignored artifacts and are not included.",
+  "source": "backend/src/app/forecasting/artifacts/shield_xr/training_meta.json",
+  "saved_at": "2026-08-24",
+  "training_run_id": "e08f32fd-a7e7-4904-81f8-5a721f64605c",
+  "train_end": "2023-09-13",
+  "valid_end": "2023-11-07",
+  "n_skus": 733,
+  "class_winner": {
+    "lumpy": "Plain-L1",
+    "smooth": "Plain",
+    "erratic": "Plain",
+    "intermittent": "Plain-L1"
+  },
+  "class_bias": {
+    "lumpy": 1.35,
+    "smooth": 1.2023002785600865,
+    "erratic": 1.1628503555612568,
+    "intermittent": 1.35
+  },
+  "gate_config": {
+    "wape": 0.47970435522870997,
+    "t_spk": 1.01,
+    "hard_occ_t": 0.4,
+    "w_smooth": 0.9,
+    "bias_c": 1.2382606959399722
+  },
+  "test_accuracy": 0.5447699702341157,
+  "test_wape": 0.45523002976588434,
+  "hospital_weekly_accuracy": 0.8567808221234983,
+  "hospital_weekly_wape": 0.14321917787650174,
+  "reconciled_weekly_per_drug_mean_accuracy": 0.39043785773400447,
+  "reconciled_weekly_per_drug_median_accuracy": 0.38261895889473574,
+  "volume_weighted_weekly_accuracy": 0.6674884822877869,
+  "non_lumpy_weekly_accuracy": 0.7254979427596819,
+  "hybrid_abc_combined_accuracy": 0.848718173243833,
+  "n_hybrid_abc_named_drugs": 15,
+  "per_sb_class_weekly_accuracy": {
+    "erratic": 0.737521556142354,
+    "intermittent": 0.4535640485590664,
+    "lumpy": 0.46124984959931836,
+    "smooth": 0.7528968533893671
+  }
+}

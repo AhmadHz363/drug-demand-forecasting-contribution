@@ -33,8 +33,9 @@ torch>=2.2.0
 lightning>=2.2.0
 pytorch-forecasting>=1.0.0
 
-# ── Cold start — autoencoder & MAML ───────────────────────────────────────────
+# ── Cold start — autoencoder, MAML, and the DDPFF-style baseline ──────────────
 learn2learn>=0.2.0
+xgboost>=2.0.0
 
 # ── Testing & development ──────────────────────────────────────────────────────
 pytest>=8.0.0
