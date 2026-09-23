@@ -59,6 +59,8 @@ backend/checkpoints/
 backend/src/app/forecasting/artifacts/
 backend/src/app/cold_start/artifacts/*
 !backend/src/app/cold_start/artifacts/.gitkeep
+# Root copies for manual upload; do not commit
+/model-weights/
 
 # ── Node / Next.js (dashboard/) ───────────────────────────────────────────────
 node_modules/
