@@ -44,6 +44,8 @@ A Next.js dashboard sits on top of a FastAPI backend and a PostgreSQL database. 
 
 Hospital pharmacy extracts are not committed to this repository. The study files are in the [HDDIF dataset](https://drive.google.com/drive/folders/1AMpKXxbBCp97P3iBUSwkW7pBfV18lZsu?usp=drive_link) folder: `hospital 2023.xlsx`, `hospital 2024.xlsx`, and `cameo_drugs.csv`.
 
+Trained weights for this run are in the [HDDIF model weights](https://drive.google.com/drive/folders/1iRH2kBYPsrodqeg3IgqpnLNVrHH8p8v_?usp=drive_link) folder, under `model-weights/shieldxr/` and `model-weights/cameo/`. They are not committed here.
+
 ---
 
 ## Architecture
@@ -384,6 +386,8 @@ Without this seed, **Cold Start → Train** will fail with “Need at least 5 ma
 
 Open **Cold Start** and run training. The job fits the metric network, writes artifacts under `backend/src/app/cold_start/artifacts/`, and returns hold-out accuracy (WAPE / clipped accuracy, analog win rates, conformal coverage).
 
+To skip that training, copy `autoencoder.pt`, `maml_base.pt`, and `cameo_artifacts.json` from `model-weights/cameo/` in the [HDDIF model weights](https://drive.google.com/drive/folders/1iRH2kBYPsrodqeg3IgqpnLNVrHH8p8v_?usp=drive_link) folder into `backend/src/app/cold_start/artifacts/`.
+
 Then enter metadata for a **new** SKU (class, form, strength, route, …) to obtain an analog-based weekly launch forecast.
 
 The Chapter 5 ARIMA and DDPFF-style baselines are in `backend/src/app/cold_start/cameo/baselines.py`. ARIMA is order (1, 0, 1) on the nearest analog. DDPFF-style is the XGBoost cluster, analog blend (alpha 0.6), residual ARIMA, and 7-point SPC pipeline. The Cold Start trainer still scores CAMEO against the Analogous baseline only.
@@ -394,7 +398,7 @@ Open **Forecasting** and start training. SHIELD-XR uses the **full enriched hosp
 
 Retrain only when you ingest new history or change the engine; existing artifacts are reused unless you force a retrain from the UI.
 
-The 24 Aug 2026 class winners, biases, and SHIELD-XR gate coefficients are in `backend/docs/baselines/shield_xr_training_2026-08-24.json`. Full model files stay gitignored.
+The 24 Aug 2026 class winners, biases, and SHIELD-XR gate coefficients are in `backend/docs/baselines/shield_xr_training_2026-08-24.json`. The fitted files for that run (`daily_ensemble.pkl`, `weekly_breakdown.pkl`, `training_meta.json`) are in `model-weights/shieldxr/` in the [HDDIF model weights](https://drive.google.com/drive/folders/1iRH2kBYPsrodqeg3IgqpnLNVrHH8p8v_?usp=drive_link) folder. Copy them into `backend/src/app/forecasting/artifacts/shield_xr/` to forecast without retraining.
 
 ### 7. Read forecasts and KPIs
 
@@ -669,4 +673,4 @@ Then recreate a user and re-ingest files. Training artifacts on disk are separat
 
 ## License and data
 
-This repository is research software for a university thesis. Hospital extracts are shared in the [HDDIF dataset](https://drive.google.com/drive/folders/1AMpKXxbBCp97P3iBUSwkW7pBfV18lZsu?usp=drive_link) folder (`hospital 2023.xlsx`, `hospital 2024.xlsx`, `cameo_drugs.csv`) and are not committed here. Trained model weights are not published. The SHIELD-XR selection-coefficient snapshot is the exception: `backend/docs/baselines/shield_xr_training_2026-08-24.json`. Do not commit `.env` files, Excel dumps, or artifact directories — they are gitignored.
+This repository is research software for a university thesis. Hospital extracts are shared in the [HDDIF dataset](https://drive.google.com/drive/folders/1AMpKXxbBCp97P3iBUSwkW7pBfV18lZsu?usp=drive_link) folder (`hospital 2023.xlsx`, `hospital 2024.xlsx`, `cameo_drugs.csv`) and are not committed here. Trained weights for this run are shared in the [HDDIF model weights](https://drive.google.com/drive/folders/1iRH2kBYPsrodqeg3IgqpnLNVrHH8p8v_?usp=drive_link) folder (`model-weights/shieldxr/`, `model-weights/cameo/`) and are not committed here. The in-repo coefficient snapshot is `backend/docs/baselines/shield_xr_training_2026-08-24.json`. Do not commit `.env` files, Excel dumps, or artifact directories — they are gitignored.
